@@ -27,7 +27,9 @@ As always, included is a cleaned, CSS-ed, HTML-format of the POD docs.
 ** What's new?
 
 >From the POD:
-This is version B<0.43>, the second release of this module. 
+This is version 0.44, an bug fix for the third release of the module.
+
+This fixed a compatibilty issue that 0.43 had with Perl 5.3.3
 
 With this version I have gone through and tuned up many area
 of this module, including the descent algorithim in learn(),

@@ -6,29 +6,28 @@
 #
 
 BEGIN {
-	 $AI::NeuralNet::Mesh::VERSION = "0.43";
+	 $AI::NeuralNet::Mesh::VERSION = "0.44";
 	 $AI::NeuralNet::Mesh::ID = 
 '$Id: AI::NeuralNet::Mesh.pm, v'.$AI::NeuralNet::Mesh::VERSION.' 2000/15/09 03:29:08 josiah Exp $';
 }
 
 package AI::NeuralNet::Mesh;
                                  
-    use strict;
-    use Benchmark; 
-
-   	require Exporter;
-	our @ISA         = qw(Exporter);
-	our @EXPORT      = qw(range intr pdiff);
-	our %EXPORT_TAGS = ( 
+    require Exporter;
+	@ISA         = qw(Exporter);
+	@EXPORT      = qw(range intr pdiff);
+	%EXPORT_TAGS = ( 
 		'default'    => [ qw ( range intr pdiff )],
 		'all'        => [ qw ( p low high ramp and_gate or_gate range intr pdiff ) ],
 		'p'          => [ qw ( p low high intr pdiff ) ],
 		'acts'       => [ qw ( ramp and_gate or_gate range ) ],
 	);
-    our @EXPORT_OK   = ( @{ $EXPORT_TAGS{'all'} }, qw( p low high ramp and_gate or_gate ) );
+    @EXPORT_OK   = ( @{ $EXPORT_TAGS{'all'} }, qw( p low high ramp and_gate or_gate ) );
+    
+    use strict;
+    use Benchmark; 
 
-	
-	# See POD for usage of this variable.
+   	# See POD for usage of this variable.
 	$AI::NeuralNet::Mesh::Connector = '_c';
 	
 	# Debugging subs
@@ -1196,7 +1195,9 @@ AI::NeuralNet::Mesh - An optimized, accurate neural network Mesh.
 
 =head1 VERSION & UPDATES
 
-This is version B<0.43>, the second release of this module. 
+This is version B<0.44>, an update release for version 0.43.
+
+This fixed the usage conflict with perl 5.3.3.
 
 With this version I have gone through and tuned up many area
 of this module, including the descent algorithim in learn(),
@@ -2333,7 +2334,7 @@ you can redistribute it and/or modify it under the same terms as Perl itself.
 
 The C<AI::NeuralNet::Mesh> and related modules are free software. THEY COME WITHOUT WARRANTY OF ANY KIND.
 
-$Id: AI::NeuralNet::Mesh.pm, v0.43 2000/15/09 03:29:08 josiah Exp $
+$Id: AI::NeuralNet::Mesh.pm, v0.44 2000/15/09 03:29:08 josiah Exp $
 
 
 =head1 THANKS

@@ -1,0 +1,68 @@
+Greetings Perlfolk,
+
+** What is this?
+
+AI::NeuralNet::Mesh is an optimized, accurate neural network Mesh.
+It was designed with accruacy and speed in mind. This better learning 
+accuracy (by twenty-three percent), as well as a much faster learning rate
+and run speed over any other neural network simulater that I know of
+in Perl.(*)
+
+Included are fifteen seperate example scripts. In particular demonstration
+of the accuracy and speed of this network model, check out ex_add2.pl, 
+ex_dow.pl, and ex_add.pl
+
+** What's new?
+
+>From the POD:
+AI::NeuralNet::Mesh is an optimized, accurate neural network Mesh.
+It was designed with accruacy and speed in mind. This is a neural
+net simulator similar to AI::NeuralNet::BackProp, but with several
+important differences. The two APIs are the same, that of this module
+and ::BackProp, so any scripts that use ::BackProp, should be able
+to use this module without (almost) any changes in your code. (The 
+only changes needed will be to change the "use" line and the "new" 
+constructor line to use ::Mesh instead of ::BackProp.)
+
+This is a complete, from-scratch re-write of the Perl module 
+AI::NeuralNet::BackProp. It a method of learning similar to 
+back propogation, yet with a few custom modifications, includeding
+a specialized output layer, as well as a better descent model for 
+learning. 
+
+Almost all of the notes and description in AI::NeuralNet::BackProp
+apply to this module, yet the differences are detailed in the POD. I
+also have included a complete working function refrence in the POD, 
+with any necessary updates added.
+
+
+** What do you think?
+
+Now I know you people are out there that are using the module...
+I can hear the fists hitting the keyboards in frustration. :-) Relieve
+some of that frustration by e-mailing me and letting me know what
+you think of the module and any suggestions you got. 
+
+Use it, let me know what you all think. This is just a
+groud-up write of a neural network, no code stolen or
+anything else. Don't expect a classicist view of nerual 
+networking here. I simply wrote from operating theory, 
+not math theory. Any die-hard neural networking gurus out 
+there? Let me know how far off I am with
+this code! :-)
+	
+Regards,
+
+        ~ Josiah Bryan, <jdb@wcoil.com>
+
+Latest Version:
+
+        http://www.josiah.countystart.com/modules/get.pl?mesh:README
+
+
+(*) In regards to the speed claim: I only know of two neural networks
+in Perl, AI::NeuralNet::Mesh (this module) and AI::NeuralNet::BackProp,
+both of which I wrote. If someone else has written a neural-net in Perl
+I would love to see how or what techniques you have used. I am sorry if
+I have missed anybody's Perl neural-net. If I have, it was not an intentional
+error on my part.

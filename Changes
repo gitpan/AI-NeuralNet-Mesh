@@ -1,0 +1,9 @@
+Revision history for Perl extension AI::NeuralNet::Mesh.
+
+0.20  Tue Aug 22 18:01:04 2000
+        - Original version; created by Josiah Bryan
+        - Complete core re-write of AI::NeuralNet::BackProp
+        - 23% More accuracy in learning
+        - Increased learning speed
+        - Better connection topology
+

@@ -25,7 +25,7 @@
 	];
 	
 	#$net->debug(4);
-	for (0..3) {
+	for (0..2) {
 		my $f = $net->learn_set($set);
 		print "Forgotten: $f%\n";
 	}

@@ -2,38 +2,61 @@ Greetings Perlfolk,
 
 ** What is this?
 
-AI::NeuralNet::Mesh is an optimized, accurate neural network Mesh.
-It was designed with accruacy and speed in mind. This better learning 
-accuracy (by twenty-three percent), as well as a much faster learning rate
-and run speed over any other neural network simulater that I know of
-in Perl.(*)
+(This version includes 3 new major features.)
+
+AI::NeuralNet::Mesh is an optimized, accurate neural network Mesh
+written in Perl. It was designed with accruacy and speed in mind.
+This better learning accuracy (by twenty-three percent), as well
+as a much faster learning rate and run speed over any other neural
+network simulater that I know of in Perl.(*)
 
 Included are fifteen seperate example scripts. In particular demonstration
 of the accuracy and speed of this network model, check out ex_add2.pl, 
-ex_dow.pl, and ex_add.pl
+ex_dow.pl, and ex_add.pl.
+
+As always, included is a cleaned, CSS-ed, HTML-format of the POD docs.
 
 ** What's new?
 
 >From the POD:
-AI::NeuralNet::Mesh is an optimized, accurate neural network Mesh.
-It was designed with accruacy and speed in mind. This is a neural
-net simulator similar to AI::NeuralNet::BackProp, but with several
-important differences. The two APIs are the same, that of this module
-and ::BackProp, so any scripts that use ::BackProp, should be able
-to use this module without (almost) any changes in your code. (The 
-only changes needed will be to change the "use" line and the "new" 
-constructor line to use ::Mesh instead of ::BackProp.)
+This is version *0.31*, the second release of this module. 
 
-This is a complete, from-scratch re-write of the Perl module 
-AI::NeuralNet::BackProp. It a method of learning similar to 
-back propogation, yet with a few custom modifications, includeding
-a specialized output layer, as well as a better descent model for 
-learning. 
+In this version, I have included three major features. Also in this
+release I have included two minor fixes which increase the learning
+speed of networks. I also fixed a bug in the load_pcx() method which
+prevented it from loading the PCX::Loader module correctly. This
+version also has the ability to have negative weights in the network.
 
-Almost all of the notes and description in AI::NeuralNet::BackProp
-apply to this module, yet the differences are detailed in the POD. I
-also have included a complete working function refrence in the POD, 
-with any necessary updates added.
+The major features added are:
+
+LAYER SIZES
+
+Rodin Porrata once suggested it would be good to have control over
+each layer's node size. Well, Rodin, here you go. Each layer can 
+have a custom number of nodes, which you can set in two ways, detailed
+in the new() constructor, below. Layer sizes are preserved across load()
+and save() calls.
+
+LAYER EXTENSION
+
+With the ability to have custom layer sizes, I have also included the
+ability to extend layer sizes after network construction. You can add
+nodes with extend() or extend_layer() after the network is constructed
+or loaded.
+
+
+CUSTOM NODE ACTIVATION
+
+Ahh, and another treat. You can choose from one of four activation
+functions and set the activation function by layer, or you can even
+set each individual node to a seperate activation function. Possible
+activation types are:
+        'linear' (simply transfer sum of inputs as output)
+        'sigmoid' (also called 'sigmoid_1') (0 or 1, threshold based)
+        'sigmoid_2' (-1,0,1, threshold based)
+        user specified (passed as a CODE ref.)
+
+You can also customize threshold levels on a per-layer, or per-node basis.
 
 
 ** What do you think?
@@ -64,5 +87,5 @@ Latest Version:
 in Perl, AI::NeuralNet::Mesh (this module) and AI::NeuralNet::BackProp,
 both of which I wrote. If someone else has written a neural-net in Perl
 I would love to see how or what techniques you have used. I am sorry if
-I have missed anybody's Perl neural-net. If I have, it was not an intentional
-error on my part.
+I have missed anybody's Perl neural-net. If I have, it was not an 
+intentional error on my part.

@@ -18,7 +18,7 @@
     use AI::NeuralNet::Mesh;
 
 	# Create a new network with 2 layers and 35 neurons in each layer.
-    my $net = new AI::NeuralNet::Mesh(2,35,1);
+    my $net = new AI::NeuralNet::Mesh(1,35,1);
 	
 	# Debug level of 4 gives JUST learn loop iteteration benchmark and comparrison data 
 	# as learning progresses.

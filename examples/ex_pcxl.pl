@@ -12,7 +12,8 @@
 	
 	my $net=AI::NeuralNet::Mesh->new(2,2);
 	
-	my $img = $net->load_pcx("josiah.pcx");             
+	my $img = $net->load_pcx("josiah.pcx");
+        print "ERROR: ",$net->error(),"\n" if($net->error());
 	
 	$net->join_cols($img->get_block([0,0,50,50]),50,0);
 	

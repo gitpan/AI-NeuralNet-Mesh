@@ -5,13 +5,24 @@
 	Desc: 
 
 		This demonstrates a simple AND gate.
+		Included is example of the hash construction form of the new() method.
 
 =cut
 
 	use AI::neuralNet::Mesh;
 	
 	# Uses 1 layer and 2 nodes per layer, with one output node
-	my $net = new AI::NeuralNet::Mesh(1,2,1);
+	my $net = new AI::NeuralNet::Mesh([
+		{
+			nodes		=>	2,    		# input layer, 2 nodes
+			activation  =>	linear		# linear transfer function
+		},
+		{
+			nodes		=>	1,			# output layer, 1 node
+			activation	=>	sigmoid,	# sigmoid transfer function, (0/1)
+			threshold	=>	0.75		# set threshold for sigmoid fn to 0.75
+		}
+	]);
 	
 	if(!$net->load('and.mesh')) {
 		$net->learn_set([	

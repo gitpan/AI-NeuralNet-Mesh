@@ -4,7 +4,7 @@
 	Author: Josiah Bryan, <jdb@wcoil.com>
 	Desc: 
 
-        This is the synopsis from the POD.
+        This is the synopsis from the POD for AI::NeuralNet::BackProp.
 		
 =cut
 

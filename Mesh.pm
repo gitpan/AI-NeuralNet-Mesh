@@ -6,9 +6,9 @@
 #
 
 BEGIN {
-	 $AI::NeuralNet::Mesh::VERSION = "0.20";
+	 $AI::NeuralNet::Mesh::VERSION = "0.31";
 	 $AI::NeuralNet::Mesh::ID = 
-'$Id: AI::NeuralNet::Mesh.pm, v'.$AI::NeuralNet::Mesh::VERSION.' 2000/23/12 05:05:27 josiah Exp $';
+'$Id: AI::NeuralNet::Mesh.pm, v'.$AI::NeuralNet::Mesh::VERSION.' 2000/25/12 05:26:10 josiah Exp $';
 }
 
 package AI::NeuralNet::Mesh;
@@ -22,6 +22,13 @@ package AI::NeuralNet::Mesh;
 	sub debug { shift; $AI::NeuralNet::Mesh::DEBUG = shift || 0; } 
 	sub d { shift if(substr($_[0],0,4) eq 'AI::'); my ($a,$b,$c)=(shift,shift,$AI::NeuralNet::Mesh::DEBUG); print $a if($c == $b); return $c }
 	
+	# Return version of ::ID string passed or current version of this
+	# module if no string is passed.
+	sub version {
+		shift if(substr($_[0],0,4) eq 'AI::');
+		return substr((split(/\s/,(shift || $AI::NeuralNet::Mesh::ID)))[2],1);
+	}
+	
 	# Rounds a floating-point to an integer with int() and sprintf()
 	sub intr  {
     	shift if(substr($_[0],0,4) eq 'AI::');
@@ -31,11 +38,13 @@ package AI::NeuralNet::Mesh;
     
 	# Package constructor
 	sub new {
+		no strict 'refs';
 		my $type	=	shift;
 		my $self	=	{};
 		my $layers	=	shift;
 		my $nodes	=	shift;
 		my $outputs	=	shift || $nodes;
+		my $inputs	=	shift || $nodes;
         
 		bless $self, $type;
 		                       
@@ -48,12 +57,36 @@ package AI::NeuralNet::Mesh;
 		    # instead of just creating the network from pre-exisiting refrence
 			return $self->load($layers,1);
 		}
-	
+		
 		# Save parameters
-		$self->{total_nodes}	= $layers * $nodes;
+		$self->{total_nodes}	= $layers * $nodes + $outputs;
+		$self->{total_layers}	= $layers;
 		$self->{nodes}			= $nodes;
+		$self->{inputs}			= $inputs;
 		$self->{outputs}		= $outputs;
-		$self->{layers}			= $layers;
+		
+		# Looks like we got ourselves a layer specs array
+		if(ref($layers) eq "ARRAY") { 
+			if(ref($layers->[0]) eq "HASH") {
+				$self->{total_nodes}	=	0;
+				$self->{inputs}			=	$layers->[0]->{nodes};
+				$self->{nodes}			=	$layers->[0]->{nodes};
+				$self->{outputs}		=	$layers->[$#{$layers}]->{nodes};
+				$self->{total_layers}	=	$#{$layers};
+				for (0..$#{$layers}){$self->{layers}->[$_] = $layers->[$_]->{nodes}}
+				for (0..$self->{total_layers}){$self->{total_nodes}+=$self->{layers}->[$_]}	
+			} else {
+				$self->{inputs}			= $layers->[0];
+			    $self->{nodes}			= $layers->[0];
+				$self->{outputs}		= $layers->[$#{$layers}];
+				$self->{layers} 		= $layers;
+				$self->{total_layers}	= $#{$self->{layers}};
+				$self->{total_nodes}	= 0;
+				for (0..$self->{total_layers}) {
+					$self->{total_nodes}+=$self->{layers}->[$_];
+				}
+			}
+		}
 		
 		# Initalize misc. variables
 		$self->{col_width}		=	5;
@@ -63,65 +96,191 @@ package AI::NeuralNet::Mesh;
 		# Build mesh
 		$self->_init();	
 		
+		# Initalize activation, thresholds, etc, if provided
+		if(ref($layers->[0]) eq "HASH") {
+			for (0..$#{$layers}) {
+				$self->activation($_,$layers->[$_]->{activation});
+				$self->threshold($_,$layers->[$_]->{threshold});
+				$self->mean($_,$layers->[$_]->{mean});
+			}
+		}
+				
 		# Done!
 		return $self;
 	}	
     
 
     # Internal usage
+    # Connects one range of nodes to another range
+    sub _c {
+    	my $self	=	shift;
+    	my $r1a		=	shift;
+    	my $r1b		=	shift;
+    	my $r2a		=	shift;
+    	my $r2b		=	shift;
+    	my $m1		=	shift || $self->{mesh};
+    	my $m2		=	shift || $m1;
+    	
+    	if(($r2b-$r2a) >= ($r1b-$r1a)) {
+    		d("Case 1.($r1a..$r1b),($r2a..$r2b)..\n",10);
+	    	for my $y ($r1a..$r1b-1) {
+				for my $z ($r2a..$r2b-1) {
+					d(".($y,$z).\n",10);
+					$m1->[$y]->add_output_node($m2->[$z]);
+				}
+			}
+		}
+		elsif(($r2b-$r2a)<($r1b-$r1a)) {
+			d("Case 2.($r1a..$r1b),($r2a..$r2b)..\n",10);
+			my $div = intr(($r1b-$r1a)/($r2b-$r2a));
+			for my $x (0..($r2b-$r2a)-1) {
+				for my $y (0..($r1b-$r1a)-1) {
+					d(".($x,$y).$r2a+($x*$div+$y)\n",10);
+					$m1->[$r1a+($x*$div+$y)]->add_output_node($m2->[$r2a+$x]) if($m1->[$r1a+($x*$div+$y)]);
+			 	}
+			} 
+		} else {
+		    $self->{error} = "_c(): Range defenition error. ($r1a..$r1b),($r2a..$r2b).";
+		    return undef;
+		}		
+    }
+    
+    # Internal usage
     # Creates the mesh of neurons
     sub _init {
-    	my $self	=	shift;
-    	my $nodes	=	$self->{nodes};
-    	my $outputs	=	$self->{outputs} || $nodes;
-    	my $tmp 	=	$self->{total_nodes};
+    	my $self		=	shift;
+    	my $nodes		=	$self->{nodes};
+    	my $outputs		=	$self->{outputs} || $nodes;
+    	my $inputs		=	$self->{inputs}  || $nodes;
+    	my $layers		=	$self->{total_layers};
+        my $tmp 		=	$self->{total_nodes} || ($layers * $nodes + $outputs);
+    	my $layer_specs	=	$self->{layers};
+        my ($x,$y,$z);
+        no strict 'refs';
+        
+        # Just to be safe.
+        $self->{total_nodes} = $tmp;
+        
+        # If they didn't give layer specifications, then we derive our own specs.
+        if(!(defined $self->{layers})) {
+        	$layer_specs = [split(',',"$nodes," x $layers)];
+        	$layer_specs->[$#{$layer_specs}+1]=$outputs;
+        	$self->{layers}	= $layer_specs;
+        }
             
 		# First create the individual nodes
 		for my $x (0..$tmp-1) {
 			$self->{mesh}->[$x] = AI::NeuralNet::Mesh::node->new($self);
         }              
         
-        my ($x,$y,$z);
-        
-        # Now we connect the nodes together, each node to one input of every 
-        # node in the layer above it.
-        for ($x=0; $x<$tmp; $x+=$nodes) {
-        	if($x+$nodes>=$tmp) { last }
-			for ($y=0; $y<$nodes; $y++) {
-				for ($z=0; $z<$nodes; $z++) {      
-					$self->{mesh}->[$x+$y]->add_output_node($self->{mesh}->[$x+$nodes+$z]);
-				}
-			}
-		}		
-		
-		# Get an instance of an output (data collector) node
+        # Get an instance of an output (data collector) node
 		$self->{output} = AI::NeuralNet::Mesh::output->new($self);
 		
-		# Here we do a little trick to handle output node numbers that are 
-		# smaller than number of nodes in layers. We add another layer of
-		# nodes above the last layer that has exactly $output number of nodes
-		# in it. This layer collectes the data from the pervious layer and
-		# sends it on to our data collector object, $self->{output}.
-		my $div = intr($nodes/$outputs);
-		for my $x (0..$outputs-1) {
-			$self->{mesh}->[$tmp+$x] = AI::NeuralNet::Mesh::node->new($self);
-			$self->{mesh}->[$tmp+$x]->add_output_node($self->{output});
-			for my $y (0..$div-1) {
-				$self->{mesh}->[$tmp-$nodes+($x*$div+$y)]->add_output_node($self->{mesh}->[$tmp+$x]);
-		 	}
-		} 
+		# Connect the output layer to the data collector
+        for $x (0..$outputs-1) {                    
+			$self->{mesh}->[$tmp-$outputs+$x]->add_output_node($self->{output});
+		}
+		
+		# Now we use the _c() method to connect the layers together.
+        $y=0;
+        for $x (0..$layers-1) {
+        	$z = $layer_specs->[$x];
+        	$self->_c($y,$y+$z,$y+$z,$y+$z+$layer_specs->[$x+1]);
+        	$y+=$z;
+		}		
 		
 		# Get an instance of our cap node.
 		$self->{input}->{cap} = AI::NeuralNet::Mesh::cap->new(); 
 
 		# Add a cap to the bottom of the mesh to stop it from trying
 		# to recursivly adjust_weight() where there are no more nodes.		
-		for my $x (0..$nodes-1) {
+		for my $x (0..$inputs-1) {
 			$self->{input}->{IDs}->[$x] = 
 				$self->{mesh}->[$x]->add_input_node($self->{input}->{cap});
 		}
 	}
     
+    # See POD for usage
+    sub extend {
+    	my $self	=	shift;
+    	my $layers	=	shift;
+    
+    	# Looks like we got ourselves a layer specs array
+		if(ref($layers) eq "ARRAY") { 
+			if($self->{total_layers}!=$#{$layers}) {
+				$self->{error} = "extend(): Cannot add new layers. Create a new network to add layers.\n";
+				return undef;
+			}
+			if(ref($layers->[0]) eq "HASH") {
+				$self->{total_nodes}	=	0;
+				$self->{inputs}			=	$layers->[0]->{nodes};
+				$self->{nodes}			=	$layers->[0]->{nodes};
+				$self->{outputs}		=	$layers->[$#{$layers}]->{nodes};
+				for (0..$#{$layers}){
+					$self->extend_layer($_,$layers->[$_]);
+					$self->{layers}->[$_] =$layers->[$_]->{nodes};
+				}
+				for (0..$self->{total_layers}){$self->{total_nodes}+=$self->{layers}->[$_]}	
+			} else {
+				$self->{inputs}			= $layers->[0];
+			    $self->{nodes}			= $layers->[0];
+				$self->{outputs}		= $layers->[$#{$layers}];
+				$self->{total_nodes}	= 0;
+				for (0..$self->{total_layers}){$self->extend_layer($_,$layers->[$_])}
+				$self->{layers} 		= $layers;
+				for (0..$self->{total_layers}){$self->{total_nodes}+= $self->{layers}->[$_]}
+			}
+		} else {
+			$self->{error} = "extend(): Invalid argument type.\n";
+			return undef;
+		}
+		return 1;
+	}
+    
+    # See POD for usage
+    sub extend_layer {
+    	my $self	=	shift;
+    	my $layer	=	shift || 0;
+    	my $specs	=	shift;
+    	if(!$specs) {
+    		$self->{error} = "extend_layer(): You must provide specs to extend layer $layer with.\n";
+    		return undef;
+    	}
+    	if(ref($specs) eq "HASH") {
+    		$self->activation($layer,$specs->{activation}) if($specs->{activation});
+    		$self->threshold($layer,$specs->{threshold})   if($specs->{threshold});
+    		$self->mean($layer,$specs->{mean})             if($specs->{mean});
+    		return $self->add_nodes($layer,$specs->{nodes});
+    	} else { 
+    		return $self->add_nodes($layer,$specs);
+    	}
+    	return 1;
+    }
+    
+    # Pseudo-internal usage
+    sub add_nodes {
+    	my $self	=	shift;
+    	my $layer	=	shift;
+    	my $nodes	=	shift;
+    	d("Checking on extending layer $layer to $nodes nodes (check:$self->{layers}->[$layer]).\n",9);
+        return 1 if ($nodes == $self->{layers}->[$layer]);
+        if ($self->{layers}->[$layer]>$nodes) {
+        	$self->{error} = "add_nodes(): I cannot remove nodes from the network with this version of my module. You must create a new network to remove nodes.\n";
+        	return undef;
+        }
+        my $more	=	$nodes - $self->{layers}->[$layer] - 1;
+        for (0..$more) {
+        	$self->{mesh}->[$#{$self->{mesh}}+1] = AI::NeuralNet::Mesh::node->new($self);
+        }
+        d("Extending layer $layer by $more.\n",9);
+        my $n		=	0;
+		no strict 'refs';
+		for(0..$layer-2){$n+=$self->{layers}->[$_]}
+		$self->_c($n,$n+$self->{layers}->[$layer-1],$#{$self->{mesh}}-$more+1,$#{$self->{mesh}});
+		$self->_c($#{$self->{mesh}}-$more+1,$#{$self->{mesh}},$n+$self->{layers}->[$layer],$n+$self->{layers}->[$layer]+$self->{layers}->[$layer+1]);
+    }
+        
+        
     # See POD for usage
     sub run {
     	my $self	=	shift;
@@ -134,8 +293,8 @@ package AI::NeuralNet::Mesh;
     		d("inputing $inputs->[$x] at index $x with ID $self->{input}->{IDs}->[$x].\n",1);
     		$self->{mesh}->[$x]->input($inputs->[$x]+$const,$self->{input}->{IDs}->[$x]);
     	}
-    	if($#{$inputs}<$self->{nodes}-1) {
-	    	for my $x ($#{$inputs}+1..$self->{nodes}-1) {
+    	if($#{$inputs}<$self->{inputs}-1) {
+	    	for my $x ($#{$inputs}+1..$self->{inputs}-1) {
 	 	    	d("inputing 1 at index $x with ID $self->{input}->{IDs}->[$x].\n",1);
 	    		$self->{mesh}->[$x]->input(1,$self->{input}->{IDs}->[$x]);
 	    	}
@@ -156,14 +315,15 @@ package AI::NeuralNet::Mesh;
     	my $outputs	=	shift;
     	my %args	=	@_;
     	my $inc		=	$args{inc} || 0.1;
-    	my $max     =   $args{max} || 1024;
+    	my $max     =   $args{max} || 1024;               
+    	
 		my $error   = 	($args{error}>-1 && defined $args{error}) ? $args{error} : -1;
   		my $dinc	=	0.0001;
 		my $diff	=	100;
 		my $start	=	new Benchmark;
 		$inputs		=	$self->crunch($inputs)  if($inputs == 0);
 		$outputs	=	$self->crunch($outputs) if($outputs == 0);
-		my ($flag,$ldiff,$cdiff,$_mi,$loop);
+		my ($flag,$ldiff,$cdiff,$_mi,$loop,$y);
 		while(!$flag && ($max ? $loop<$max : 1)) {
     		my $b	=	new Benchmark;
     		my $got	=	$self->run($inputs);
@@ -176,8 +336,7 @@ package AI::NeuralNet::Mesh;
 			}
 			
 			$inc   -= ($dinc*$diff);
-			$inc   = 0.0000000001 if($inc < 0.0000000001);
-		
+			
 			if($diff eq $ldiff) {
 				$cdiff++;
 				$inc += ($dinc*$diff)+($dinc*$cdiff*10);
@@ -192,7 +351,8 @@ package AI::NeuralNet::Mesh;
     			d("got: $a, wanted: $b\n",2);
     			if ($a != 	$b) {
     				$flag	=	0;
-    				$self->{mesh}->[$self->{total_nodes}+$x]->adjust_weight(($a<$b)?1:-1,$inc);
+    				$y 		=	$self->{total_nodes}-$self->{outputs}+$x;
+    				$self->{mesh}->[$y]->adjust_weight((($a<$b)?1:-1)*$inc);
    				}
    			}
    			
@@ -240,15 +400,18 @@ package AI::NeuralNet::Mesh;
 	sub save {
 		my $self	=	shift;
 		my $file	=	shift;
+		no strict 'refs';
 		
 		open(FILE,">$file");
 	    
 	    print FILE "header=$AI::NeuralNet::Mesh::ID\n";
-	    
-	    print FILE "layers=$self->{layers}\n";
+	   	
+		print FILE "total_layers=$self->{total_layers}\n";
+		print FILE "total_nodes=$self->{total_nodes}\n";
 	    print FILE "nodes=$self->{nodes}\n";
+	    print FILE "inputs=$self->{inputs}\n";
 	    print FILE "outputs=$self->{outputs}\n";
-	    print FILE "total=$self->{total_nodes}\n";
+	    print FILE "layers=",(($self->{layers})?join(',',@{$self->{layers}}):''),"\n";
 	    
 	    print FILE "rand=$self->{random}\n";
 	    print FILE "const=$self->{const}\n";
@@ -262,31 +425,18 @@ package AI::NeuralNet::Mesh;
 		for my $a (0..$self->{_crunched}->{_length}-1) {
 			print FILE "c$a=$self->{_crunched}->{list}->[$a]\n";
 		}
-	                   
-	    my $nodes	=	$self->{nodes};
-	   	my $outputs	=	$self->{outputs};
-	   	my $tmp		=	$self->{total_nodes};
-	   	my $div 	=	intr($nodes/$outputs);
-		
-		# Save input and hidden layers
-		for my $a (0..$tmp-1) {
-			my $w='';
-			for my $b (0..$nodes-1) {
-				$w .= "$self->{mesh}->[$a]->{_inputs}->[$b]->{weight}," if($self->{mesh}->[$a]->{_inputs}->[$b]->{weight});
+	
+		my $n = 0;
+		for my $x (0..$self->{total_layers}) {
+			for my $y (0..$self->{layers}->[$x]-1) {
+			    my $w='';
+				for my $z (0..$self->{layers}->[$x-1]-1) {
+					$w.="$self->{mesh}->[$n]->{_inputs}->[$z]->{weight},";
+				}
+				print FILE "n$n=$w$self->{mesh}->[$n]->{activation},$self->{mesh}->[$n]->{threshold},$self->{mesh}->[$n]->{mean}\n";
+				$n++;
 			}
-			chop($w);
-			print FILE "n$a=$w\n";
 		}
-
-		# Save output layer	   
-	   	for my $x (0..$outputs-1) {
-			my $w='';
-			for my $y (0..$div-1) {
-				$w .= "$self->{mesh}->[$tmp+$x]->{_inputs}->[$b]->{weight}," if($self->{mesh}->[$tmp+$x]->{_inputs}->[$b]->{weight});
-		 	}
-		 	chop($w);
-		 	print FILE "n".($tmp+$x)."=$w\n";
-		} 
 		
 	    close(FILE);
 	    
@@ -325,18 +475,18 @@ package AI::NeuralNet::Mesh;
 	    	return undef;
 	    }
 	    
+	    return $self->load_old($file) if($self->version($db{"header"})<0.21);
+	    
 	    if($load_flag) {
 		    undef $self;
-	
-			# Create new network
-			$self = AI::NeuralNet::Mesh->new($db{"layers"},
-		    			 				 	 $db{"nodes"},
-		    						      	 $db{"outputs"});
+	        $self = AI::NeuralNet::Mesh->new([split(',',$db{layers})]);
 		} else {
-			$self->{layers}			=	$db{"layers"};
-			$self->{nodes}			=	$db{"nodes"};
-			$self->{outputs}		=	$db{"outputs"};
-			$self->{total_nodes}	=	$db{"total"};
+			$self->{inputs}			= $db{inputs};
+		    $self->{nodes}			= $db{nodes};
+			$self->{outputs}		= $db{outputs};
+			$self->{layers} 		= [split(',',$db{layers})];
+			$self->{total_layers}	= $db{total_layers};
+			$self->{total_nodes}	= $db{total_nodes};
 		}
 		
 	    # Load variables
@@ -346,8 +496,84 @@ package AI::NeuralNet::Mesh;
 	    $self->{rA}			= $db{"rA"};
 		$self->{rB}			= $db{"rB"};
 		$self->{rS}			= $db{"rS"};
-		my @tmp				= split /\,/, $db{"rRef"};
-		$self->{rRef}		= \@tmp;
+		$self->{rRef}		= [split /\,/, $db{"rRef"}];
+		
+	   	$self->{_crunched}->{_length}	=	$db{"crunch"};
+		
+		for my $a (0..$self->{_crunched}->{_length}-1) {
+			$self->{_crunched}->{list}->[$a] = $db{"c$a"}; 
+		}
+		
+		$self->_init();
+	    
+		my $n = 0;
+		for my $x (0..$self->{total_layers}) {
+			for my $y (0..$self->{layers}->[$x]-1) {
+			    my @l = split /\,/, $db{"n$n"};
+				for my $z (0..$self->{layers}->[$x-1]-1) {
+					$self->{mesh}->[$n]->{_inputs}->[$z]->{weight} = $l[$z];
+				}
+				my $z = $self->{layers}->[$x-1];
+				$self->{mesh}->[$n]->{activation} = $l[$z];
+				$self->{mesh}->[$n]->{threshold}  = $l[$z+1];
+				$self->{mesh}->[$n]->{mean}       = $l[$z+2];
+				$n++;
+			}
+		}
+		
+		return $self;
+	}
+	
+	# Load entire network state from disk.
+	sub load_old {
+		my $self		=	shift;
+		my $file		=	shift;  
+		my $load_flag   =	shift;
+		
+	    if(!(-f $file)) {
+	    	$self->{error} = "File \"$file\" does not exist.";
+	    	return undef;
+	    }
+	    
+	    open(FILE,"$file");
+	    my @lines=<FILE>;
+	    close(FILE);
+	    
+	    my %db;
+	    for my $line (@lines) {
+	    	chomp($line);
+	    	my ($a,$b) = split /=/, $line;
+	    	$db{$a}=$b;
+	    }
+	    
+	    if(!$db{"header"}) {
+	    	$self->{error} = "Invalid format.";
+	    	return undef;
+	    }
+	    
+	    if($load_flag) {
+		    undef $self;
+	
+			# Create new network
+			$self = AI::NeuralNet::Mesh->new($db{"layers"},
+		    			 				 	 $db{"nodes"},
+		    						      	 $db{"outputs"});
+		} else {
+			$self->{total_layers}	=	$db{"layers"};
+			$self->{nodes}			=	$db{"nodes"};
+			$self->{outputs}		=	$db{"outputs"};
+			$self->{inputs}			=	$db{"nodes"};
+			#$self->{total_nodes}	=	$db{"total"};
+		}
+		
+	    # Load variables
+	    $self->{random}		= $db{"rand"};
+	    $self->{const}		= $db{"const"};
+        $self->{col_width}	= $db{"cw"};
+	    $self->{rA}			= $db{"rA"};
+		$self->{rB}			= $db{"rB"};
+		$self->{rS}			= $db{"rS"};
+		$self->{rRef}		= [split /\,/, $db{"rRef"}];
 		
 	   	$self->{_crunched}->{_length}	=	$db{"crunch"};
 		
@@ -385,23 +611,108 @@ package AI::NeuralNet::Mesh;
 	# Dumps the complete weight matrix of the network to STDIO
 	sub show {
 		my $self	=	shift;
-		for my $a (0..$self->{total_nodes}-1) {
-			print "Neuron $a: ";
-			for my $b (0..$self->{nodes}-1) {
-				print $self->{mesh}->[$a]->{_inputs}->[$b]->{weight},"\t";
+		my $n 		=	0;    
+		no strict 'refs';
+		for my $x (0..$self->{total_layers}) {
+			for my $y (0..$self->{layers}->[$x]-1) {
+				for my $z (0..$self->{layers}->[$x-1]-1) {
+					print "$self->{mesh}->[$n]->{_inputs}->[$z]->{weight},";
+				}
+				$n++;
 			}
 			print "\n";
 		}
 	}
+	  
+	# Set the activation type of a specific layer.
+	# usage: $net->activation($layer,$type);
+	# $type can be: "linear", "sigmoid", "sigmoid_2".
+	# You can use "sigmoid_1" as a synonym to "sigmoid". 
+	# Type can also be a CODE ref, ( ref($type) eq "CODE" ).
+	# If $type is a CODE ref, then the function is called in this form:
+	# 	$output	= &$type($sum_of_inputs,$self);
+	# The code ref then has access to all the data in that node (thru the
+	# blessed refrence $self) and is expected to return the value to be used
+	# as the output for that node. The sum of all the inputs to that node
+	# is already summed and passed as the first argument.
+	sub activation {
+		my $self	=	shift;
+		my $layer	=	shift || 0;
+		my $value	=	shift || 'linear';
+		my $n 		=	0;    
+		no strict 'refs';
+		for(0..$layer-1){$n+=$self->{layers}->[$_]}
+		for($n..$n+$self->{layers}->[$layer]-1) {
+			$self->{mesh}->[$_]->{activation} = $value; 
+		}
+	}
 	
+	# Applies an activation type to a specific node
+	sub node_activation {
+		my $self	=	shift;
+		my $layer	=	shift || 0;
+		my $node	=	shift || 0;
+		my $value	=	shift || 'linear';
+		my $n 		=	0;    
+		no strict 'refs';
+		for(0..$layer-1){$n+=$self->{layers}->[$_]}
+		$self->{mesh}->[$n+$node]->{activation} = $value; 
+	}
+	
+	# Set the activation threshold for a specific layer.
+	# Only applicable if that layer uses "sigmoid" or "sigmoid_2"
+	# usage: $net->threshold($layer,$threshold);
+	sub threshold {
+		my $self	=	shift;
+		my $layer	=	shift || 0;
+		my $value	=	shift || 0.5; 
+		my $n		=	0;
+		no strict 'refs';
+		for(0..$layer-1){$n+=$self->{layers}->[$_]}
+		for($n..$n+$self->{layers}->[$layer]-1) {
+			$self->{mesh}->[$_]->{threshold} = $value;
+		}
+	}
+	
+	# Applies a threshold to a specific node
+	sub node_threshold {
+		my $self	=	shift;
+		my $layer	=	shift || 0;
+		my $node	=	shift || 0;
+		my $value	=	shift || 0.5; 
+		my $n		=	0;
+		no strict 'refs';
+		for(0..$layer-1){$n+=$self->{layers}->[$_]}
+		$self->{mesh}->[$n+$node]->{threshold} = $value;
+	}
+	
+	# Set mean (avg.) flag for a layer.
+	# usage: $net->mean($layer,$flag);
+	# If $flag is true, it enables finding the mean for that layer,
+	# If $flag is false, disables mean.
+	sub mean {
+		my $self	=	shift;
+		my $layer	=	shift || 0;
+		my $value	=	shift || 0;
+		my $n		=	0;
+		no strict 'refs';
+		for(0..$layer-1){$n+=$self->{layers}->[$_]}
+		for($n..$n+$self->{layers}->[$layer]-1) {
+			$self->{mesh}->[$_]->{mean} = $value;
+		}
+	}
+	
+	  
 	# Returns a pcx object
 	sub load_pcx {
 		my $self	=	shift;
-		if(!eval("use PCX::Loader;")) {
-			$self->{error}="Cannot load PCX::Loader module.";
+		my $file	=	shift;
+		eval('use PCX::Loader');
+		if(@_) {
+			$self->{error}="Cannot load PCX::Loader module: @_";
 			return undef;
 		}
-		return PCX::Loader->new($self,shift);
+		return PCX::Loader->new($self,$file);
 	}	
 	
 	# Crunch a string of words into a map
@@ -540,19 +851,22 @@ package AI::NeuralNet::Mesh;
 		return $out;
 	}
 	
-	# Return benchmark time from last run() or learn() operation.
+	# Return benchmark time from last learn() operation.
 	sub benchmark {
 		shift->{benchmarked};
 	}
 	
 	# Same as benchmark()
 	sub benchmarked {
-		benchmark;
+		benchmark(shift);
 	}
 	
 	# Return the last error in the mesh, or undef if no error.
 	sub error {
-		shift->{error};
+		my $self = shift;
+		return undef if !$self->{error};
+		chomp($self->{error});
+		return $self->{error}."\n";
 	}
 	
 	# Rounds a floating-point to an integer with int() and sprintf()
@@ -657,30 +971,42 @@ package AI::NeuralNet::Mesh::node;
 		my $input	=	shift;
 		my $from_id	=	shift;
 		
-		# Apply weight
 		$self->{_inputs}->[$from_id]->{value} = $input * $self->{_inputs}->[$from_id]->{weight};
 		$self->{_inputs}->[$from_id]->{fired} = 1;
 		
-		# Debug, level 1
 		$self->{_parent}->d("got input $input from id $from_id, weighted to $self->{_inputs}->[$from_id]->{value}.\n",1);
 		
-		# Check to see if all nodes that we are connected to have fired
 		my $flag	=	1;
 		for my $x (0..$self->{_inputs_size}-1) { $flag = 0 if(!$self->{_inputs}->[$x]->{fired}) }
 		if ($flag) {
-			# Sum inputs, find mean value, and send to all nodes we are connected to.
-			my $output	=	0;
-			for my $i (@{$self->{_inputs}}) {
+			$self->{_parent}->d("all inputs fired for $self.\n",1);
+			my $output	=	0;   
+			
+			# Sum
+			for my $i (@{$self->{_inputs}}) {                        
 				$output += $i->{value};
 			}
-			$output /= $self->{_inputs_size};
-			$output += (rand()*$self->{_parent}->{random});
-			for my $o (@{$self->{_outputs}}) {
-				$o->{node}->input($output,$o->{from_id});
+		
+			# Handle activations, thresholds, and means
+			$output	   /=  $self->{_inputs_size} if($self->{flag_mean});
+			$output    += (rand()*$self->{_parent}->{random});
+			$output		= ($output>=$self->{threshold})?1:0 if(($self->{activation} eq "sigmoid") || ($self->{activation} eq "sigmoid_1"));
+			if($self->{activation} eq "sigmoid_2") {
+				$output =  1 if($output >$self->{threshold});
+				$output = -1 if($output <$self->{threshold});
+				$output =  0 if($output==$self->{threshold});
 			}
+			
+			# Handle CODE refs
+			$output = &{$self->{activation}}($output,$self) if(ref($self->{activation}) eq "CODE");
+			
+			# Send output
+			for my $o (@{$self->{_outputs}}) { $o->{node}->input($output,$o->{from_id}) }
+		} else {
+			$self->{_parent}->d("all inputs have NOT fired for $self.\n",1);
 		}
 	}
-	
+
 	sub add_input_node {
 		my $self	=	shift;
 		my $node	=	shift;
@@ -705,11 +1031,10 @@ package AI::NeuralNet::Mesh::node;
 	
 	sub adjust_weight {
 		my $self	=	shift;
-		my $delta	=	shift;
 		my $inc		=	shift;
 		for my $i (@{$self->{_inputs}}) {
-			$i->{weight} += $inc * $i->{weight} * $delta;
-			$i->{node}->adjust_weight($delta,$inc) if($i->{node});
+			$i->{weight} += $inc * $i->{weight};
+			$i->{node}->adjust_weight($inc) if($i->{node});
 		}
 	}
 
@@ -747,7 +1072,7 @@ package AI::NeuralNet::Mesh::output;
 		my $self	=	shift;
 		my $input	=	shift;
 		my $from_id	=	shift;
-
+		$self->{_parent}->d("GOT INPUT [$input] FROM [$from_id]\n",1);
 		$self->{_inputs}->[$from_id] = $self->{_parent}->intr($input);
 	}
 	
@@ -765,14 +1090,64 @@ __END__
 AI::NeuralNet::Mesh - An optimized, accurate neural network Mesh.
 
 =head1 SYNOPSIS
+    
+	use AI::NeuralNet::Mesh;
 
+    # Create a mesh with 2 layers, 2 nodes/layer, and one output node.
 	my $net = new AI::NeuralNet::Mesh(2,2,1);
+	
+	# Teach the network the AND function
+	$net->learn([0,0],[0]);
+	$net->learn([0,1],[0]);
+	$net->learn([1,0],[0]);
+	$net->learn([1,1],[1]);
+	
+	# Present it with two test cases
+	my $result_bit_1 = $net->run([0,1])->[0];
+	my $result_bit_2 = $net->run([1,1])->[0];
+	
+	# Display the results
+	print "AND test with inputs (0,1): $result_bit_1\n";
+	print "AND test with inputs (1,1): $result_bit_2\n";
 	
 
 =head1 VERSION & UPDATES
 
-This is version B<0.20>, the first release of this module. 
+This is version B<0.31>, the second release of this module. 
 
+In this version, I have included three major features. Also in this
+release I have included two minor fixes which increase the learning speed
+of networks. I also fixed a bug in the load_pcx() method which prevented it
+from loading the PCX::Loader module correctly. This version also has the ability
+to have negative weights in the network.
+
+The major features added are:
+
+=item LAYER SIZES
+
+Rodin Porrata once suggested it would be good to have control over
+each layer's node size. Well, Rodin, here you go. Each layer can 
+have a custom number of nodes, which you can set in two ways, detailed
+in the new() constructor, below. Layer sizes are preserved across load()
+and save() calls.
+
+=item LAYER EXTENSION
+
+With the ability to have custom layer sizes, I have also included the ability to 
+extend layer sizes after network construction. You can add nodes with extend() or
+extend_layer() after the network is constructed or loaded.
+
+=item CUSTOM NODE ACTIVATION
+
+Ahh, and another treat. You can choose from one of four activation functions
+and set the activation function by layer, or you can even set each individual
+node to a seperate activation function. Possible activation types are: C<linear>
+(simply transfer sum of inputs as output), C<sigmoid> (also called C<sigmoid_1>) (0 or 1, threshold based),
+ C<sigmoid_2> (-1,0,1, threshold based), or user specified (passed as a CODE ref.)
+ You can also customize threshold levels on a per-layer, or per-node basis.
+ 
+For more information on setting activation and threshold levels, see the new() constructor,
+or any of the activation() or threshold() methods.
 
 =head1 DESCRIPTION
 
@@ -785,7 +1160,7 @@ to use this module without (almost) any changes in your code. (The
 only changes needed will be to change the "use" line and the "new" 
 constructor line to use ::Mesh instead of ::BackProp.)
 
-This is a complete, from-scratch re-write of the Perl module 
+This is a module complete, from-scratch re-write of the Perl module 
 AI::NeuralNet::BackProp. It a method of learning similar to 
 back propogation, yet with a few custom modifications, includeding
 a specialized output layer, as well as a better descent model for 
@@ -797,7 +1172,7 @@ also have included a complete working function refrence here, with
 the updates added.
 
 
-=head1 WHATS DIFFERENT?
+=head1 WHATS DIFFERENT FROM C<::BackProp>?
 
 =head2 MESH CONNECTIONS
 
@@ -889,7 +1264,13 @@ less than I<forty seconds> to learn the data set (one loop).
 
 =head1 METHODS
 
-=item new AI::NeuralNet::BackProp($layers, $nodes [, $outputs])
+=item AI::NeuralNet::Mesh->new();
+
+There are four ways to construct a new network with new(). Each is detailed below.
+
+P.S. Don't worry, the old C<new($layers, $nodes [, $outputs])> still works like always!
+
+=item AI::NeuralNet::Mesh->new($layers, $nodes [, $outputs]);
 
 Returns a newly created neural network from an C<AI::NeuralNet::Mesh>
 object. The network will have C<$layers> number of layers in it
@@ -899,8 +1280,102 @@ There is an optional parameter of $outputs, which specifies the number
 of output neurons to provide. If $outputs is not specified, $outputs
 defaults to equal $size. 
 
-Before you can really do anything useful with your new neural network
-object, you need to teach it some patterns. See the learn() method, below.
+
+=item AI::NeuralNet::Mesh->new($file);
+
+This will automatically create a new network from the file C<$file>. It will
+return undef if the file was of an incorrect format or non-existant. Otherwise,
+it will return a blessed refrence to a network completly restored from C<$file>.
+
+=item AI::NeuralNet::Mesh->new(\@layer_sizes);
+
+This constructor will make a network with the number of layers corresponding to the length
+in elements of the array ref passed. Each element in the array ref passed is expected
+to contain an integer specifying the number of nodes (neurons) in that layer. The first
+layer ($layer_sizes[0]) is to be the input layer, and the last layer in @layer_sizes is to be
+the output layer.
+
+Example:
+
+	my $net = AI::NeuralNet::Mesh->new([2,3,1]);
+	
+
+Creates a network with 2 input nodes, 3 hidden nodes, and 1 output node.
+
+
+=item AI::NeuralNet::Mesh->new(\@array_of_hashes);
+
+Another dandy constructor...this is my favorite. It allows you to tailor the number of layers,
+the size of the layers, the activation type (you can even add anonymous inline subs with this one),
+and even the threshold, all with one array ref-ed constructor.
+
+Example:
+
+	my $net = AI::NeuralNet::Mesh->new([
+	    {
+		    nodes        => 2,
+		    activation   => linear
+		},
+		{
+		    nodes        => 3,
+		    activation   => sub {
+		        my $sum  =  shift;
+		        return $sum + rand()*1;
+		    }
+		},
+		{
+		    nodes        => 1,
+		    activation   => sigmoid,
+		    threshold    => 0.75
+		}
+	]);
+	
+	
+Interesting, eh? What you are basically passing is this:
+
+	my @info = ( 
+		{ },
+		{ },
+		{ },
+		...
+	);
+
+You are passing an array ref who's each element is a hash refrence. Each
+hash refrence, or more precisely, each element in the array refrence you are passing
+to the constructor, represents a layer in the network. Like the constructor above,
+the first element is the input layer, and the last is the output layer. The rest are
+hidden layers.
+
+Each hash refrence is expected to have AT LEAST the "nodes" key set to the number
+of nodes (neurons) in that layer. The other two keys are optional. If "activation" is left
+out, it defaults to "linear". If "threshold" is left out, it defaults to 0.50.
+
+The "activation" key can be one of four values:
+
+	linear                    ( simply use sum of inputs as output )
+	sigmoid    [ sigmoid_1 ]  ( only positive sigmoid )
+	sigmoid_2                 ( positive / 0 /negative sigmoid )
+	\&code_ref;
+
+"sigmoid_1" is an alias for "sigmoid". 
+
+The code ref option allows you to have a custom activation function for that layer.
+The code ref is called with this syntax:
+
+	$output = &$code_ref($sum_of_inputs, $self);
+	
+The code ref is expected to return a value to be used as the output of the node.
+The code ref also has access to all the data of that node through the second argument,
+a blessed hash refrence to that node.
+
+Three of the activation syntaxes are shown in the first constructor above, the "linear",
+"sigmoid" and code ref types.
+
+You can also set the activation and threshold values after network creation with the
+activation() and threshold() methods. 
+
+	
+
 
 
 =item $net->learn($input_map_ref, $desired_result_ref [, options ]);
@@ -926,14 +1401,14 @@ Options should be written on hash form. There are three options:
 	 error	=>	$maximum_allowable_percentage_of_error
 	 
 
-$learning_gradient is an optional value used to adjust the weights of the internal
+C<$learning_gradient> is an optional value used to adjust the weights of the internal
 connections. If $learning_gradient is ommitted, it defaults to 0.10.
  
-$maximum_iterations is the maximum numbers of iteration the loop should do.
+C<$maximum_iterations> is the maximum numbers of iteration the loop should do.
 It defaults to 1024.  Set it to 0 if you never want the loop to quit before
 the pattern is perfectly learned.
 
-$maximum_allowable_percentage_of_error is the maximum allowable error to have. If 
+C<$maximum_allowable_percentage_of_error> is the maximum allowable error to have. If 
 this is set, then learn() will return when the perecentage difference between the
 actual results and desired results falls below $maximum_allowable_percentage_of_error.
 If you do not include 'error', or $maximum_allowable_percentage_of_error is set to -1,
@@ -1040,7 +1515,7 @@ data sets. Even larger speed increases are realized on larger data sets.
 
 This method will apply the given array ref at the input layer of the neural network, and
 it will return an array ref to the output of the network. run() will now automatically crunch() 
-a string given as an input.
+a string given as an input (See the crunch() method for info on crunching).
 
 Example Usage:
 	
@@ -1049,7 +1524,7 @@ Example Usage:
 
 You can also do this with a string:
 
-	my $outputs = $net->run('cloudy, wind is 5 MPH NW');
+	my $outputs = $net->run('cloudy - wind is 5 MPH NW');
 	
 
 See also run_uc() below.
@@ -1079,6 +1554,7 @@ working on their own. If you do get range working, please send me a copy! :-)
 
 
 =item $net->benchmark();
+
 =item $net->benchmarked();
 
 NOTE: This is a deviation from the AI::NeuralNet::BackProp API.
@@ -1100,7 +1576,7 @@ Toggles debugging off if called with $level = 0 or no arguments. There are four 
 of debugging. 
 
 NOTE: Debugging verbosity has been toned down somewhat from AI::NeuralNet::BackProp,
-but level 4 still prints the same amount of information as you were used too. The other
+but level 4 still prints the same amount of information as you were used to. The other
 levels, however, are mostly for really advanced use. Not much explanation in the other
 levels, but they are included for those of you that feel daring (or just plain bored.)
 
@@ -1108,12 +1584,12 @@ Level 0 ($level = 0) : Default, no debugging information printed. All printing i
 left to calling script.
 
 Level 1 ($level = 1) : Displays the activity between nodes, prints what values were
-received and what they were weighted too.
+received and what they were weighted to.
 
-Level 2 ($level = 2) : I don't think I included any level 2 debugs in this version.
+Level 2 ($level = 2) : Just prints info from the learn() loop, in the form of "got: X, wanted Y"
+type of information.   
 
-Level 3 ($level = 3) : Just prints info from the lear() loop, in the form of "got: X, wanted Y"
-type of information.
+Level 3 ($level = 3) : I don't think I included any level 3 debugs in this version.
 
 Level 4 ($level = 4) : This level is the one I use most. It is only used during learning. It
 displays the current error (difference between actual outputs and the target outputs you
@@ -1127,7 +1603,10 @@ Toggles debuging off when called with no arguments.
 =item $net->save($filename);
 
 This will save the complete state of the network to disk, including all weights and any
-words crunched with crunch() . Also saves any output ranges set with range() .
+words crunched with crunch() . Also saves the layer size and activations of the network.
+
+NOTE: The only activation type NOT saved is the CODE ref type, which must be set again
+after loading.
 
 This uses a simple flat-file text storage format, and therefore the network files should
 be fairly portable.
@@ -1145,12 +1624,56 @@ This will load from disk any network saved by save() and completly restore the i
 state at the point it was save() was called at.
 
 If the file doesn't exist, or if the file is of an invalid file type, then load() will
-return undef. To determine what caused the error, use the error() method, beelow.
+return undef. To determine what caused the error, use the error() method, below.
 
 If there were no errors, it will return a refrence to $net.
 
 
 
+=item $net->activation($layer,$type);
+
+This sets the activation type for layer C<$layer>.
+
+C<$type> can be one of four values:
+
+	linear                    ( simply use sum of inputs as output )
+	sigmoid    [ sigmoid_1 ]  ( only positive sigmoid )
+	sigmoid_2                 ( positive / 0 /negative sigmoid )
+	\&code_ref;
+
+"sigmoid_1" is an alias for "sigmoid". 
+
+The code ref option allows you to have a custom activation function for that layer.
+The code ref is called with this syntax:
+
+	$output = &$code_ref($sum_of_inputs, $self);
+	
+The code ref is expected to return a value to be used as the output of the node.
+The code ref also has access to all the data of that node through the second argument,
+a blessed hash refrence to that node.
+
+The activation type for each layer is preserved across load/save calls. 
+
+EXCEPTION: Due to the constraints of Perl, I cannot load/save the actual subs that the code
+ref option points to. Therefore, you must re-apply any code ref activation types after a 
+load() call.
+
+=item $net->node_activation($layer,$node,$type);
+
+This sets the activation function for a specific node in a layer. The same notes apply
+here as to the activation() method above.
+
+
+=item $net->threshold($layer,$value);
+
+This sets the activation threshold for a specific layer. The threshold only is used
+when activation is set to "sigmoid", "sigmoid_1", or "sigmoid_2". 
+
+
+=item $net->node_threshold($layer,$node,$value);
+
+This sets the activation threshold for a specific node in a layer. The threshold only is used
+when activation is set to "sigmoid", "sigmoid_1", or "sigmoid_2".  
 
 =item $net->join_cols($array_ref,$row_length_in_elements,$high_state_character,$low_state_character);
 
@@ -1166,11 +1689,48 @@ by a null character (\0). join_cols() defaults to the latter behaviour.
 
 
 
-=item $net->pdiff($array_ref_A, $array_ref_B);
+=item $net->extend(\@array_of_hashes);
 
-This function is used VERY heavily internally to calculate the difference in percent
-between elements of the two array refs passed. It returns a %.20f (sprintf-format) 
-percent sting.
+This allows you to re-apply any activations and thresholds with the same array ref which
+you created a network with. This is useful for re-applying code ref activations after a load()
+call without having to type the code ref twice.
+
+You can also specify the extension in a simple array ref like this:
+
+	$net->extend([2,3,1]);
+	
+Which will simply add more nodes if needed to set the number of nodes in each layer to their 
+respective elements. This works just like the respective new() constructor, above.
+
+NOTE: Your net will probably require re-training after adding nodes.
+
+
+=item $net->extend_layer($layer,\%hash);
+
+With this you can modify only one layer with its specifications in a hash refrence. This hash
+refrence uses the same keys as for the last new() constructor form, above. 
+
+You can also specify just the number of nodes for the layer in this form:
+
+	$net->extend_layer(0,5);
+
+Which will set the number of nodes in layer 0 to 5 nodes. This is the same as calling:
+	
+	$net->add_nodes(0,5);
+
+Which does the exact same thing. See add_nodes() below.
+
+NOTE: Your net will probably require re-training after adding nodes.
+
+
+=item $net->add_nodes($layer,$total_nodes);
+
+This method was created mainly to service the extend*() group of functions, but it 
+can also be called independently. This will add nodes as needed to layer C<$layer> to 
+make the nodes in layer equal to $total_nodes. 
+
+NOTE: Your net will probably require re-training after adding nodes.
+
 
 
 =item $net->p($a,$b);
@@ -1195,6 +1755,15 @@ Returns the index of the element in array REF passed with the highest comparativ
 =item $net->low($array_ref);
 
 Returns the index of the element in array REF passed with the lowest comparative value.
+
+
+
+=item $net->pdiff($array_ref_A, $array_ref_B);
+
+This function is used VERY heavily internally to calculate the difference in percent
+between elements of the two array refs passed. It returns a %.20f (sprintf-format) 
+percent sting.
+
 
 
 
@@ -1441,6 +2010,9 @@ distribution ZIP file.
 	ex_bmp.pl
 	ex_bmp2.pl
 	ex_letters.pl
+	ex_pat.pl
+	ex_crunch.pl
+	ex_synop.pl
 	
 Each of these includes a short explanation at the top of the file. Each of these
 are ment to demonstrate simple, yet practical uses of this module.
@@ -1469,7 +2041,7 @@ as it comes out of the mesh.
 
 =head1 BUGS
 
-This is the beta release of C<AI::NeuralNet::Mesh>, and that holding true, I am sure 
+This is an alpha release of C<AI::NeuralNet::Mesh>, and that holding true, I am sure 
 there are probably bugs in here which I just have not found yet. If you find bugs in this module, I would 
 appreciate it greatly if you could report them to me at F<E<lt>jdb@wcoil.comE<gt>>,
 or, even better, try to patch them yourself and figure out why the bug is being buggy, and
@@ -1486,8 +2058,20 @@ you can redistribute it and/or modify it under the same terms as Perl itself.
 
 The C<AI::NeuralNet::Mesh> and related modules are free software. THEY COME WITHOUT WARRANTY OF ANY KIND.
 
-$Id: AI::NeuralNet::Mesh.pm, v0.20 2000/23/12 05:05:27 josiah Exp $
+$Id: AI::NeuralNet::Mesh.pm, v0.31 2000/25/12 05:26:10 josiah Exp $
 
+
+=head1 THANKS
+
+Below are a list of the people that have contributed in some way to this module (no particular order):
+
+	Rodin Porrata, rodin@ursa.llnl.gov
+	Randal L. Schwartz, merlyn@stonehedge.com
+	Michiel de Roo, michiel@geo.uu.nl
+	
+Thanks to Randal and Michiel for spoting some documentation and makefile bugs in the last release.
+Thanks to Rodin for the prompting to get the size control for individual layers in the network, as well
+as asking for negative weights.
 
 =head1 DOWNLOAD
 
@@ -1497,11 +2081,10 @@ from http://www.josiah.countystart.com/modules/get.pl?mesh:pod
 
 =head1 MAILING LIST
 
-A mailing list has been setup for AI::NeuralNet::BackProp. I am going to use that list
-to announce and discuss this module, AI::NeuralNet::Mesh. The list is for discussion of AI and 
-neural net related topics as they pertain to AI::NeuralNet::BackProp and AI::NeuralNet::mesh. 
-I will also announce in the group each time a new release of AI::NeuralNet::BackProp is 
-available.
+A mailing list has been setup for AI::NeuralNet::Mesh and AI::NeuralNet::BackProp. 
+The list is for discussion of AI and neural net related topics as they pertain to 
+AI::NeuralNet::BackProp and AI::NeuralNet::mesh. I will also announce in the group
+each time a new release of AI::NeuralNet::Mesh is available.
 
 The list address is at:
 	 ai-neuralnet-backprop@egroups.com 

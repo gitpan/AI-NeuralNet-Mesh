@@ -4,7 +4,7 @@
 	Author: Rodin Porrata, <rodin@ursa.llnl.gov>
 	Desc: 
 
-		This script runs a complete test of the networks ability to add 
+		This script runs a test of the networks ability to add 
 		and remember data sets, as well as testing the optimum "inc" to 
 		learn and the optimum number of layers for a network.
 

@@ -13,10 +13,10 @@
 	use Benchmark;
 
 	# Create a new net with 5 layes, 9 inputs, and 1 output
-    my $net = AI::NeuralNet::Mesh->new(2,9,1);
+        my $net = AI::NeuralNet::Mesh->new(2,9,1);
 	
 	# Disable debugging
-	$net->debug(4);
+        $net->debug(2);
 	
 	# Create datasets.
 	#	Note that these are ficticious values shown for illustration purposes

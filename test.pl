@@ -23,7 +23,7 @@ t $net->learn_set([
 	[ 100, 100 ], [ 200  ],
 	[ 150, 150 ], [ 300  ],
 	[ 500, 500 ], [ 1000 ],
-]);
+],degrade=>1);
 t ($net->run([60,40])->[0] eq 100);
 t $net->save("add.mesh");
 t (my $net2 = AI::NeuralNet::Mesh->new("add.mesh"));

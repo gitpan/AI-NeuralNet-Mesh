@@ -6,28 +6,47 @@
 #
 
 BEGIN {
-	 $AI::NeuralNet::Mesh::VERSION = "0.31";
+	 $AI::NeuralNet::Mesh::VERSION = "0.43";
 	 $AI::NeuralNet::Mesh::ID = 
-'$Id: AI::NeuralNet::Mesh.pm, v'.$AI::NeuralNet::Mesh::VERSION.' 2000/25/12 05:26:10 josiah Exp $';
+'$Id: AI::NeuralNet::Mesh.pm, v'.$AI::NeuralNet::Mesh::VERSION.' 2000/15/09 03:29:08 josiah Exp $';
 }
 
 package AI::NeuralNet::Mesh;
-    
+                                 
     use strict;
-    use Benchmark;
-    
+    use Benchmark; 
+
+   	require Exporter;
+	our @ISA         = qw(Exporter);
+	our @EXPORT      = qw(range intr pdiff);
+	our %EXPORT_TAGS = ( 
+		'default'    => [ qw ( range intr pdiff )],
+		'all'        => [ qw ( p low high ramp and_gate or_gate range intr pdiff ) ],
+		'p'          => [ qw ( p low high intr pdiff ) ],
+		'acts'       => [ qw ( ramp and_gate or_gate range ) ],
+	);
+    our @EXPORT_OK   = ( @{ $EXPORT_TAGS{'all'} }, qw( p low high ramp and_gate or_gate ) );
+
+	
+	# See POD for usage of this variable.
+	$AI::NeuralNet::Mesh::Connector = '_c';
+	
 	# Debugging subs
 	$AI::NeuralNet::Mesh::DEBUG  = 0;
 	sub whowasi { (caller(1))[3] . '()' }
 	sub debug { shift; $AI::NeuralNet::Mesh::DEBUG = shift || 0; } 
 	sub d { shift if(substr($_[0],0,4) eq 'AI::'); my ($a,$b,$c)=(shift,shift,$AI::NeuralNet::Mesh::DEBUG); print $a if($c == $b); return $c }
+	sub verbose {debug @_};
+	sub verbosity {debug @_};
+	sub v {debug @_};
+	
 	
 	# Return version of ::ID string passed or current version of this
-	# module if no string is passed.
+	# module if no string is passed. Used in load() to detect file versions.
 	sub version {
 		shift if(substr($_[0],0,4) eq 'AI::');
-		return substr((split(/\s/,(shift || $AI::NeuralNet::Mesh::ID)))[2],1);
-	}
+		substr((split(/\s/,(shift || $AI::NeuralNet::Mesh::ID)))[2],1);
+	}                                  
 	
 	# Rounds a floating-point to an integer with int() and sprintf()
 	sub intr  {
@@ -58,13 +77,6 @@ package AI::NeuralNet::Mesh;
 			return $self->load($layers,1);
 		}
 		
-		# Save parameters
-		$self->{total_nodes}	= $layers * $nodes + $outputs;
-		$self->{total_layers}	= $layers;
-		$self->{nodes}			= $nodes;
-		$self->{inputs}			= $inputs;
-		$self->{outputs}		= $outputs;
-		
 		# Looks like we got ourselves a layer specs array
 		if(ref($layers) eq "ARRAY") { 
 			if(ref($layers->[0]) eq "HASH") {
@@ -86,19 +98,26 @@ package AI::NeuralNet::Mesh;
 					$self->{total_nodes}+=$self->{layers}->[$_];
 				}
 			}
-		}
+		} else {
+			$self->{total_nodes}	= $layers * $nodes + $outputs;
+			$self->{total_layers}	= $layers;
+			$self->{nodes}			= $nodes;
+			$self->{inputs}			= $inputs;
+			$self->{outputs}		= $outputs;
+		}	
 		
 		# Initalize misc. variables
 		$self->{col_width}		=	5;
 		$self->{random}			=	0;
 		$self->{const}			=	0.0001;
+		$self->{connector}		=	$AI::NeuralNet::Mesh::Connector;
 		
 		# Build mesh
 		$self->_init();	
 		
 		# Initalize activation, thresholds, etc, if provided
 		if(ref($layers->[0]) eq "HASH") {
-			for (0..$#{$layers}) {
+			for (0..$self->{total_layers}) {
 				$self->activation($_,$layers->[$_]->{activation});
 				$self->threshold($_,$layers->[$_]->{threshold});
 				$self->mean($_,$layers->[$_]->{mean});
@@ -120,30 +139,12 @@ package AI::NeuralNet::Mesh;
     	my $r2b		=	shift;
     	my $m1		=	shift || $self->{mesh};
     	my $m2		=	shift || $m1;
-    	
-    	if(($r2b-$r2a) >= ($r1b-$r1a)) {
-    		d("Case 1.($r1a..$r1b),($r2a..$r2b)..\n",10);
-	    	for my $y ($r1a..$r1b-1) {
-				for my $z ($r2a..$r2b-1) {
-					d(".($y,$z).\n",10);
-					$m1->[$y]->add_output_node($m2->[$z]);
-				}
+		for my $y ($r1a..$r1b-1) {
+			for my $z ($r2a..$r2b-1) {
+				$m1->[$y]->add_output_node($m2->[$z]);
 			}
 		}
-		elsif(($r2b-$r2a)<($r1b-$r1a)) {
-			d("Case 2.($r1a..$r1b),($r2a..$r2b)..\n",10);
-			my $div = intr(($r1b-$r1a)/($r2b-$r2a));
-			for my $x (0..($r2b-$r2a)-1) {
-				for my $y (0..($r1b-$r1a)-1) {
-					d(".($x,$y).$r2a+($x*$div+$y)\n",10);
-					$m1->[$r1a+($x*$div+$y)]->add_output_node($m2->[$r2a+$x]) if($m1->[$r1a+($x*$div+$y)]);
-			 	}
-			} 
-		} else {
-		    $self->{error} = "_c(): Range defenition error. ($r1a..$r1b),($r2a..$r2b).";
-		    return undef;
-		}		
-    }
+	}
     
     # Internal usage
     # Creates the mesh of neurons
@@ -155,6 +156,7 @@ package AI::NeuralNet::Mesh;
     	my $layers		=	$self->{total_layers};
         my $tmp 		=	$self->{total_nodes} || ($layers * $nodes + $outputs);
     	my $layer_specs	=	$self->{layers};
+    	my $connector	=	$self->{connector};
         my ($x,$y,$z);
         no strict 'refs';
         
@@ -167,9 +169,9 @@ package AI::NeuralNet::Mesh;
         	$layer_specs->[$#{$layer_specs}+1]=$outputs;
         	$self->{layers}	= $layer_specs;
         }
-            
-		# First create the individual nodes
-		for my $x (0..$tmp-1) {
+        
+        # First create the individual nodes
+		for my $x (0..$tmp-1) {         
 			$self->{mesh}->[$x] = AI::NeuralNet::Mesh::node->new($self);
         }              
         
@@ -183,9 +185,11 @@ package AI::NeuralNet::Mesh;
 		
 		# Now we use the _c() method to connect the layers together.
         $y=0;
+        my $c = $connector.'($self,$y,$y+$z,$y+$z,$y+$z+$layer_specs->[$x+1])';
         for $x (0..$layers-1) {
-        	$z = $layer_specs->[$x];
-        	$self->_c($y,$y+$z,$y+$z,$y+$z+$layer_specs->[$x+1]);
+        	$z = $layer_specs->[$x];                         
+        	d("layer $x size: $z (y:$y)\n,",1);
+        	eval $c;
         	$y+=$z;
 		}		
 		
@@ -259,23 +263,21 @@ package AI::NeuralNet::Mesh;
     
     # Pseudo-internal usage
     sub add_nodes {
-    	my $self	=	shift;
+    	no strict 'refs';
+		my $self	=	shift;
     	my $layer	=	shift;
     	my $nodes	=	shift;
-    	d("Checking on extending layer $layer to $nodes nodes (check:$self->{layers}->[$layer]).\n",9);
+    	my $n		=	0;
+		my $more	=	$nodes - $self->{layers}->[$layer] - 1;
+        d("Checking on extending layer $layer to $nodes nodes (check:$self->{layers}->[$layer]).\n",9);
         return 1 if ($nodes == $self->{layers}->[$layer]);
         if ($self->{layers}->[$layer]>$nodes) {
         	$self->{error} = "add_nodes(): I cannot remove nodes from the network with this version of my module. You must create a new network to remove nodes.\n";
         	return undef;
         }
-        my $more	=	$nodes - $self->{layers}->[$layer] - 1;
-        for (0..$more) {
-        	$self->{mesh}->[$#{$self->{mesh}}+1] = AI::NeuralNet::Mesh::node->new($self);
-        }
         d("Extending layer $layer by $more.\n",9);
-        my $n		=	0;
-		no strict 'refs';
-		for(0..$layer-2){$n+=$self->{layers}->[$_]}
+        for (0..$more){$self->{mesh}->[$#{$self->{mesh}}+1]=AI::NeuralNet::Mesh::node->new($self)}
+        for(0..$layer-2){$n+=$self->{layers}->[$_]}
 		$self->_c($n,$n+$self->{layers}->[$layer-1],$#{$self->{mesh}}-$more+1,$#{$self->{mesh}});
 		$self->_c($#{$self->{mesh}}-$more+1,$#{$self->{mesh}},$n+$self->{layers}->[$layer],$n+$self->{layers}->[$layer]+$self->{layers}->[$layer+1]);
     }
@@ -290,6 +292,7 @@ package AI::NeuralNet::Mesh;
     	$inputs		=	$self->crunch($inputs) if($inputs == 0);
     	no strict 'refs';
     	for my $x (0..$#{$inputs}) {
+    		last if($x>$self->{inputs});
     		d("inputing $inputs->[$x] at index $x with ID $self->{input}->{IDs}->[$x].\n",1);
     		$self->{mesh}->[$x]->input($inputs->[$x]+$const,$self->{input}->{IDs}->[$x]);
     	}
@@ -310,59 +313,67 @@ package AI::NeuralNet::Mesh;
 
 	# See POD for usage
 	sub learn {
-    	my $self	=	shift;
-    	my $inputs	=	shift;
-    	my $outputs	=	shift;
-    	my %args	=	@_;
-    	my $inc		=	$args{inc} || 0.1;
-    	my $max     =   $args{max} || 1024;               
-    	
+    	my $self	=	shift;					
+    	my $inputs	=	shift;					# input set
+    	my $outputs	=	shift;					# target outputs
+    	my %args	=	@_;						# get args into hash
+    	my $inc		=	$args{inc} || 0.002;	# learning gradient
+    	my $max     =   $args{max} || 1024;     # max iteterations
+    	my $degrade =   $args{degrade} || 0;    # enable gradient degrading
 		my $error   = 	($args{error}>-1 && defined $args{error}) ? $args{error} : -1;
-  		my $dinc	=	0.0001;
-		my $diff	=	100;
-		my $start	=	new Benchmark;
-		$inputs		=	$self->crunch($inputs)  if($inputs == 0);
+  		my $dinc	=	0.0002;					# amount to adjust gradient by
+		my $diff	=	100;					# error magin between results
+		my $start	=	new Benchmark;			
+		$inputs		=	$self->crunch($inputs)  if($inputs == 0); 
 		$outputs	=	$self->crunch($outputs) if($outputs == 0);
-		my ($flag,$ldiff,$cdiff,$_mi,$loop,$y);
+		my ($flag,$ldiff,$cdiff,$_mi,$loop,$y); 
 		while(!$flag && ($max ? $loop<$max : 1)) {
     		my $b	=	new Benchmark;
     		my $got	=	$self->run($inputs);
     		$diff 	=	pdiff($got,$outputs);
 		    $flag	=	1;
-    		
-		    if(!($error>-1 ? $diff>$error : 1)) {
+    		    		
+		    if(($error>-1 ? $diff<$error : 0) || !$diff) {
 				$flag=1;
 				last;
 			}
 			
-			$inc   -= ($dinc*$diff);
-			
-			if($diff eq $ldiff) {
-				$cdiff++;
-				$inc += ($dinc*$diff)+($dinc*$cdiff*10);
-			} else {
-				$cdiff=0;
+			if($degrade) {
+				$inc   -= ($dinc*$diff);
+				
+				if($diff eq $ldiff) {
+					$cdiff++;
+					$inc += ($dinc*$diff)+($dinc*$cdiff*10);
+				} else {
+					$cdiff=0;
+				}
+				$ldiff = $diff;
 			}
-			$ldiff = $diff;
-			
-    		for my $x (0..$self->{outputs}-1) {
+				
+    		for my $x (0..$self->{outputs}-1) { 
     			my $a	=	$got->[$x];
     			my $b	=	$outputs->[$x];
     			d("got: $a, wanted: $b\n",2);
     			if ($a != 	$b) {
     				$flag	=	0;
     				$y 		=	$self->{total_nodes}-$self->{outputs}+$x;
-    				$self->{mesh}->[$y]->adjust_weight((($a<$b)?1:-1)*$inc);
+    				$self->{mesh}->[$y]->adjust_weight(($a<$b?1:-1)*$inc,$b);
    				}
    			}
    			
    			$loop++;
-   			d("Current Error: $diff, Loop: $loop, Benchmark: ".timestr(timediff(new Benchmark,$b))."\n",4);
-   			d("Actual:\n",4);	
-   			join_cols($got,($self->{col_width})?$self->{col_width}:5) if(d()==4);
-   			d("Target:\n",4);	
-   			join_cols($outputs,($self->{col_width})?$self->{col_width}:5) if(d()==4);
    			
+   			d("===============================Loop: [$loop]===================================\n",4);
+   			d("Current Error: $diff\tCurrent Increment: $inc\n",4);
+   			d("Benchmark: ".timestr(timediff(new Benchmark,$b))."\n",4);
+   			d("============================Results, [$loop]===================================\n",4);
+   			d("Actual: ",4);	
+   			join_cols($got,($self->{col_width})?$self->{col_width}:5) if(d()==4);
+   			d("Target: ",4);	
+   			join_cols($outputs,($self->{col_width})?$self->{col_width}:5) if(d()==4);
+   			d("\n",4);
+   			d('.',12);
+   			d('['.join(',',@{$got})."-".join(',',@{$outputs}).']',13);
    		}  
    		my $str = "Learning took $loop loops and ".timestr(timediff(new Benchmark,$start))."\n";
    		d($str,3); $self->{benchmark} = "$loop loops and ".timestr(timediff(new Benchmark,$start))."\n";
@@ -375,18 +386,22 @@ package AI::NeuralNet::Mesh;
 		my $self	=	shift;
 		my $data	=	shift;
 		my %args	=	@_;
-		my $len		=	$#{$data}/2-1;
+		my $len		=	$#{$data}/2;
 		my $inc		=	$args{inc};
 		my $max		=	$args{max};
 	    my $error	=	$args{error};
-	    my $p		=	(defined $args{p})	?$args{p}	 :1;
-	    my $row		=	(defined $args{row})?$args{row}+1:1;
-		for my $x (0..$len) {
+	    my $degrade	=	$args{degrade};
+	    my $p		=	(defined $args{flag}) ?$args{flag} :1;
+	    my $row		=	(defined $args{row})  ?$args{row}+1:1;
+	    my $leave	=	(defined $args{leave})?$args{leave}:0;
+		for my $x (0..$len-$leave) {
+			d("Learning set $x...\n",4);
 			my $str = $self->learn( $data->[$x*2],
 					  		  		$data->[$x*2+1],
 					    			inc=>$inc,
 					    			max=>$max,
-					    			error=>$error);
+					    			error=>$error,
+					    			degrade=>$degrade);
 		}
 			
 		if ($p) {
@@ -394,6 +409,70 @@ package AI::NeuralNet::Mesh;
 		} else {
 			return $data->[$row]->[0]-$self->run($data->[$row-1])->[0];
 		}
+	}
+	
+	# See POD for usage
+	sub run_set {
+		my $self	=	shift;
+		my $data	=	shift;
+		my $len		=	$#{$data}/2;
+		my (@results,$res);
+		for my $x (0..$len) {
+			$res = $self->run($data->[$x*2]);
+			for(0..$#{$res}){$results[$x]->[$_]=$res->[$_]}
+			d("Running set $x [$res->[0]]...\r",4);
+		}
+		return \@results;
+	}
+	
+	#
+	# Loads a CSV-like dataset from disk
+	#
+	# Usage:
+	#	my $set = $set->load_set($file, $column, $seperator);
+	#
+	# Returns a data set of the same format as required by the
+	# learn_set() method. $file is the disk file to load set from.
+	# $column an optional variable specifying the column in the 
+	# data set to use as the class attribute. $class defaults to 0.
+	# $seperator is an optional variable specifying the seperator
+	# character between values. $seperator defaults to ',' (a single comma). 
+	# NOTE: This does not handle quoted fields, or any other record
+	# seperator other than "\n".
+	#
+	sub load_set {
+		my $self	=	shift;
+		my $file	=	shift;
+		my $attr	=	shift || 0;
+		my $sep		=	shift || ',';
+		my $data	=	[];
+		open(FILE,	$file);
+		my @lines	=	<FILE>;
+		close(FILE);
+		for my $x (0..$#lines) {
+			chomp($lines[$x]);
+			my @tmp	= split /$sep/, $lines[$x];
+			my $c=0;
+			for(0..$#tmp){ 
+				$tmp[$_]=$self->crunch($tmp[$_])->[0] if($tmp[$_]=~/[AaBbCcDdEeFfGgHhIiJjKkLlMmNnOoPpQqRrSsTtUuVvWwXxYyZz]/);
+				if($_!=$attr){$data->[$x*2]->[$c]=$tmp[$c];$c++}
+			};             
+			d("Loaded line $x, [@tmp]                            \r",4);
+			$data->[$x*2+1]=[$tmp[$attr]];
+		}
+		return $data;
+	}
+	
+	# See POD for usage
+	sub get_outs {
+		my $self	=	shift;
+		my $data	=	shift;
+		my $len		=	$#{$data}/2;
+		my $outs	=	[];
+		for my $x (0..$len) {
+			$outs->[$x] = $data->[$x*2+1];
+		}
+		return $outs;
 	}
 	
 	# Save entire network state to disk.
@@ -454,14 +533,15 @@ package AI::NeuralNet::Mesh;
 		my $file		=	shift;  
 		my $load_flag   =	shift;
 		
-	    if(!(-f $file)) {
-	    	$self->{error} = "File \"$file\" does not exist.";
-	    	return undef;
-	    }
+	    my @lines;
 	    
-	    open(FILE,"$file");
-	    my @lines=<FILE>;
-	    close(FILE);
+	    if(-f $file) {
+		    open(FILE,"$file");
+		    @lines=<FILE>;
+	    	close(FILE);
+	    } else {
+	    	@lines=split /\n/, $file;
+	    }
 	    
 	    my %db;
 	    for my $line (@lines) {
@@ -674,7 +754,7 @@ package AI::NeuralNet::Mesh;
 		}
 	}
 	
-	# Applies a threshold to a specific node
+	# Applies a threshold to a specific node     
 	sub node_threshold {
 		my $self	=	shift;
 		my $layer	=	shift || 0;
@@ -724,9 +804,9 @@ package AI::NeuralNet::Mesh;
 			$ic=$self->crunched($ws[$a]);
 			if(!defined $ic) {
 				$self->{_crunched}->{list}->[$self->{_crunched}->{_length}++]=$ws[$a];
-				@map[$a]=$self->{_crunched}->{_length};
+				$map[$a]=$self->{_crunched}->{_length};
 			} else {
-				@map[$a]=$ic;
+				$map[$a]=$ic;
             }
 		}
 		return \@map;
@@ -784,73 +864,6 @@ package AI::NeuralNet::Mesh;
 		$self->{const}	=	$const;
 	}
 	
-	# Sets/Removes value ranging
-	# NOTE: This is disabled in this version,
-	# it has no effect.
-	sub range {
-		my $self	=	shift;
-		my $ref		=	shift;
-		my $b		=	shift;
-		if(substr($ref,0,5) ne "ARRAY") {
-			if(($ref == 0) && (!defined $b)) {
-				$ref	= $self->crunch($ref);
-			} else {
-    			my $a	= $ref;
-    			$a		= $self->crunch($a)->[0] if($a == 0);
-				$b		= $self->crunch($b)->[0] if($b == 0);
-				$_[++$#_] = $a;
-    			$_[++$#_] = $b;
-    			$ref	= \@_;
-			}
-		}
-		my $rA		=	0;
-		my $rB		=	$#{$ref};
-		my $rS		=	0;
-		if(!$rA && !$rB) {
-			$self->{rA}=$self->{rB}=-1;
-			$self->{error}="Internal range error.";
-			return undef;
-		}
-		if($rB<$rA){my $t=$rA;$rA=$rB;$rB=$t};
-		$self->{rA}		=	$rA;
-		$self->{rB}		=	$rB;
-		$self->{rS}		=	$rS if($rS);
-		$self->{rRef}	=	$ref;
-		return $ref;
-	}                                                                        	
-	
-	# Used internally to scale outputs to fit range
-	sub _scale_outputs {
-		my $self	=	shift;  
-		my $in		=	shift;
-		my $rA		=	$self->{rA};
-		my $rB		=	$self->{rB};
-		my $rS		=	$self->{rS};
-		my $r		=	$rB;#-$rA+1;
-		my $l		=	$self->{outputs}-1;
-		my $out 	=	[];
-		
-		# I've disabled scaling the outputs in this Mesh because they 
-		# never seem to be able to learn correctly. Maybe later...
-		return $in;
-		
- 		return $in if(!$rA && !$rB);
-		# Adjust for a maximum outside what we have seen so far
-		for my $i (0..$l) {
-			$rS=$in->[$i]+1 if($in->[$i]+1>$rS);
-		}
-		# Loop through, convert values to percentage of maximum, then multiply
-		# percentage by range and add to base of range to get finaly value
-		for my $i (0..$l) {
-			$rS=1 if(!$rS);
-			my $t = intr((($rS-$in->[$i])/$rS)*$rB);
-			print "t:$t,in:$in->[$i],rB:$rB,rS:$rS,minus:",($rS-$in->[$i]),"\n";
-			$out->[$i] = $self->{rRef}->[$t];
-		}
-		$self->{rS}=$rS;
-		return $out;
-	}
-	
 	# Return benchmark time from last learn() operation.
 	sub benchmark {
 		shift->{benchmarked};
@@ -869,13 +882,6 @@ package AI::NeuralNet::Mesh;
 		return $self->{error}."\n";
 	}
 	
-	# Rounds a floating-point to an integer with int() and sprintf()
-	sub intr  {
-    	shift if(substr($_[0],0,4) eq 'AI::');
-      	try   { return int(sprintf("%.0f",shift)) }
-      	catch { return 0 }
-	}
-    
 	# Used to format array ref into columns
 	# Usage: 
 	#	join_cols(\@array,$row_length_in_elements,$high_state_character,$low_state_character);
@@ -918,17 +924,18 @@ package AI::NeuralNet::Mesh;
 			}
 		}
 		$a1s = 1 if(!$a1s);
-		return sprintf("%.20f",($diff/$a1s));
+		return sprintf("%.10f",($diff/$a1s));
 	}
 	
 	# Returns $fa as a percentage of $fb
 	sub p {
 		shift if(substr($_[0],0,4) eq 'AI::'); 
-		my ($fa,$fb)=(shift,shift);
-		sprintf("%.3f",((($fb-$fa)*((($fb-$fa)<0)?-1:1))/$fa)*100);
+		my ($fa,$fb)=(shift,shift); 
+		sprintf("%.3f",$fa/$fb*100); #((($fb-$fa)*((($fb-$fa)<0)?-1:1))/$fa)*100
 	}
 	
-	# Returns the index of the element in array REF passed with the highest comparative value
+	# Returns the index of the element in array REF passed with the highest 
+	# comparative value
 	sub high {
 		shift if(substr($_[0],0,4) eq 'AI::'); 
 		my $ref1 = shift; my ($el,$len,$tmp); $tmp=0;
@@ -937,7 +944,8 @@ package AI::NeuralNet::Mesh;
 		return $tmp;
 	}
 	
-	# Returns the index of the element in array REF passed with the lowest comparative value
+	# Returns the index of the element in array REF passed with the lowest 
+	# comparative value
 	sub low {
 		shift if(substr($_[0],0,4) eq 'AI::'); 
 		my $ref1 = shift; my ($el,$len,$tmp); $tmp=0;
@@ -946,7 +954,81 @@ package AI::NeuralNet::Mesh;
 		return $tmp;
 	}  
 	
-		
+	# Following is a collection of a few nifty custom activation functions.
+	# range() is exported by default, the rest you can get with:
+	#	use AI::NeuralNet::Mesh ':acts'
+	# The ':all' tag also gets these into your namespace.
+	 
+	#
+	# range() returns a closure limiting the output 
+	# of that node to a specified set of values.
+	# Good for output layers.
+	#
+	# usage example:
+	#	$net->activation(4,range(0..5));
+	# or:
+	#	..
+	#	{ 
+	#		nodes		=>	1,
+	#		activation	=>	range 5..2
+	#	}
+	#	..
+	# You can also pass an array containing the range
+	# values (not array ref), or you can pass a comma-
+	# seperated list of values as parameters:
+	#
+	#	$net->activation(4,range(@numbers));
+	#	$net->activation(4,range(6,15,26,106,28,3));
+	#
+	# Note: when using a range() activatior, train the
+	# net TWICE on the data set, because the first time
+	# the range() function searches for the top value in
+	# the inputs, and therefore, results could flucuate.
+	# The second learning cycle guarantees more accuracy.
+	#	
+	sub range {
+		my @r=@_;
+		sub{$_[1]->{t}=$_[0]if($_[0]>$_[1]->{t});$r[intr($_[0]/$_[1]->{t}*$#r)]}
+	}
+	
+	#
+	# ramp() preforms smooth ramp activation between 0 and 1 if $r is 1, 
+	# or between -1 and 1 if $r is 2. $r defaults to 1, as you can see.	
+	#
+	# Note: when using a ramp() activatior, train the
+	# net at least TWICE on the data set, because the first 
+	# time the ramp() function searches for the top value in
+	# the inputs, and therefore, results could flucuate.
+	# The second learning cycle guarantees more accuracy.
+	#
+	sub ramp {
+		my $r=shift||1;my $t=($r<2)?0:-1;
+		sub{$_[1]->{t}=$_[0]if($_[0]>$_[1]->{t});$_[0]/$_[1]->{t}*$r-$b}
+	}
+
+	# Self explanitory, pretty much. $threshold is used to decide if an input 
+	# is true or false (1 or 0). If an input is below $threshold, it is false.
+	sub and_gate {
+		my $threshold = shift || 0.5;
+		sub {
+			my $sum  = shift;
+			my $self = shift;
+			for my $x (0..$self->{_inputs_size}-1) { return $self->{_parent}->{const} if!$self->{_inputs}->[$x]->{value}<$threshold }
+			return $sum/$self->{_inputs_size};
+		}
+	}
+	
+	# Self explanitory, $threshold is used same as above.
+	sub or_gate {
+		my $threshold = shift || 0.5;
+		sub {
+			my $sum  = shift;
+			my $self = shift;
+			for my $x (0..$self->{_inputs_size}-1) { return $sum/$self->{_inputs_size} if!$self->{_inputs}->[$x]->{value}<$threshold }
+			return $self->{_parent}->{const};
+		}
+	}
+	
 1;
 
 package AI::NeuralNet::Mesh::node;
@@ -972,6 +1054,7 @@ package AI::NeuralNet::Mesh::node;
 		my $from_id	=	shift;
 		
 		$self->{_inputs}->[$from_id]->{value} = $input * $self->{_inputs}->[$from_id]->{weight};
+		$self->{_inputs}->[$from_id]->{input} = $input;
 		$self->{_inputs}->[$from_id]->{fired} = 1;
 		
 		$self->{_parent}->d("got input $input from id $from_id, weighted to $self->{_inputs}->[$from_id]->{value}.\n",1);
@@ -989,7 +1072,7 @@ package AI::NeuralNet::Mesh::node;
 		
 			# Handle activations, thresholds, and means
 			$output	   /=  $self->{_inputs_size} if($self->{flag_mean});
-			$output    += (rand()*$self->{_parent}->{random});
+			#$output    += (rand()*$self->{_parent}->{random});
 			$output		= ($output>=$self->{threshold})?1:0 if(($self->{activation} eq "sigmoid") || ($self->{activation} eq "sigmoid_1"));
 			if($self->{activation} eq "sigmoid_2") {
 				$output =  1 if($output >$self->{threshold});
@@ -1013,7 +1096,7 @@ package AI::NeuralNet::Mesh::node;
 		my $i		=	$self->{_inputs_size} || 0;
 		$self->{_inputs}->[$i]->{node}	 = $node;
 		$self->{_inputs}->[$i]->{value}	 = 0;
-		$self->{_inputs}->[$i]->{weight} = 1;
+		$self->{_inputs}->[$i]->{weight} = 1; #rand()*1;
 		$self->{_inputs}->[$i]->{fired}	 = 0;
 		$self->{_inputs_size} = ++$i;
 		return $i-1;
@@ -1078,7 +1161,7 @@ package AI::NeuralNet::Mesh::output;
 	
 	sub get_outputs {
 		my $self	=	shift;
-		return $self->{_parent}->_scale_outputs($self->{_inputs});
+		return $self->{_inputs};
 	}
 
 1;
@@ -1113,154 +1196,100 @@ AI::NeuralNet::Mesh - An optimized, accurate neural network Mesh.
 
 =head1 VERSION & UPDATES
 
-This is version B<0.31>, the second release of this module. 
+This is version B<0.43>, the second release of this module. 
 
-In this version, I have included three major features. Also in this
-release I have included two minor fixes which increase the learning speed
-of networks. I also fixed a bug in the load_pcx() method which prevented it
-from loading the PCX::Loader module correctly. This version also has the ability
-to have negative weights in the network.
+With this version I have gone through and tuned up many area
+of this module, including the descent algorithim in learn(),
+as well as four custom activation functions, and several export 
+tag sets. With this release, I have also included a few
+new and more practical example scripts. (See ex_wine.pl) This release 
+also includes a simple example of an ALN (Adaptive Logic Network) made
+with this module. See ex_aln.pl. Also in this release is support for 
+loading data sets from simple CSV-like files. See the load_set() method 
+for details. This version also fixes a big bug that I never knew about 
+until writing some demos for this version - that is, when trying to use 
+more than one output node, the mesh would freeze in learning. But, that 
+is fixed now, and you can have as many outputs as you want (how does 3 
+inputs and 50 outputs sound? :-)
 
-The major features added are:
-
-=item LAYER SIZES
-
-Rodin Porrata once suggested it would be good to have control over
-each layer's node size. Well, Rodin, here you go. Each layer can 
-have a custom number of nodes, which you can set in two ways, detailed
-in the new() constructor, below. Layer sizes are preserved across load()
-and save() calls.
-
-=item LAYER EXTENSION
-
-With the ability to have custom layer sizes, I have also included the ability to 
-extend layer sizes after network construction. You can add nodes with extend() or
-extend_layer() after the network is constructed or loaded.
-
-=item CUSTOM NODE ACTIVATION
-
-Ahh, and another treat. You can choose from one of four activation functions
-and set the activation function by layer, or you can even set each individual
-node to a seperate activation function. Possible activation types are: C<linear>
-(simply transfer sum of inputs as output), C<sigmoid> (also called C<sigmoid_1>) (0 or 1, threshold based),
- C<sigmoid_2> (-1,0,1, threshold based), or user specified (passed as a CODE ref.)
- You can also customize threshold levels on a per-layer, or per-node basis.
- 
-For more information on setting activation and threshold levels, see the new() constructor,
-or any of the activation() or threshold() methods.
 
 =head1 DESCRIPTION
 
 AI::NeuralNet::Mesh is an optimized, accurate neural network Mesh.
-It was designed with accruacy and speed in mind. This is a neural
-net simulator similar to AI::NeuralNet::BackProp, but with several
-important differences. The two APIs are the same, that of this module
-and ::BackProp, so any scripts that use ::BackProp, should be able
-to use this module without (almost) any changes in your code. (The 
-only changes needed will be to change the "use" line and the "new" 
-constructor line to use ::Mesh instead of ::BackProp.)
+It was designed with accruacy and speed in mind. 
 
-This is a module complete, from-scratch re-write of the Perl module 
-AI::NeuralNet::BackProp. It a method of learning similar to 
-back propogation, yet with a few custom modifications, includeding
-a specialized output layer, as well as a better descent model for 
-learning. 
+This network model is very flexable. It will allow for clasic binary
+operation or any range of integer or floating-point inputs you care
+to provide. With this you can change activation types on a per node or
+per layer basis (you can even include your own anonymous subs as 
+activation types). You can add sigmoid transfer functions and control
+the threshold. You can learn data sets in batch, and load CSV data
+set files. You can do almost anything you need to with this module.
+This code is deigned to be flexable. Any new ideas for this module?
+See AUTHOR, below, for contact info.
 
-Almost all of the notes and description in AI::NeuralNet::BackProp
-apply to this module, yet the differences I will detail below. I
-also have included a complete working function refrence here, with
-the updates added.
-
-
-=head1 WHATS DIFFERENT FROM C<::BackProp>?
-
-=head2 MESH CONNECTIONS
-
-In AI::NeuralNet::BackProp, the neurons would be connected like this:
-
-
-     output
-     /  \
-    O    O
-    |\  /|
-    | \/ |
-    | /\ |
-    |/  \|
-    O    O
-     \  /
-    input
-     
-     
-In this module, I have made a couple of important changes to the connection
-map. Consider this digram (This has 2 layers, 2 nodes/layer, 1 output node):
-       
- 
- data collector 
-       ^
-       |
-       O       <-- OUTPUT LAYER
-      / \  
-     /   \
-    O     O    <-- LAYER 2
-    |\   /|
-    | \ / |
-    | / \ |
-    |/   \|
-    O     O    <-- LAYER 1
-    |     | 
-    ^     ^
-  input array
-    
-    
-The mesh model includes an extra output "layer" above the final layer 
-specified in the constructor. If the constructor had specified 2 layers,
-2 nodes/layer, and B<2> output nodes, then the mesh would look like this:
-
-
- data collector 
-    ^     ^
-    |     |
-    O     O    <-- OUTPUT LAYER
-    |     |
-    |     |
-    O     O    <-- LAYER 2
-    |\   /|
-    | \ / |
-    | / \ |
-    |/   \|
-    O     O    <-- LAYER 1
-    |     | 
-    ^     ^
-  input array
-    
-
-As you can see, the mesh creator adds one node in the output layer for
-every node called for in the constructor. This adds an node
-for that output, allowing better accuracy in the network, 
-whereas in AI::NeuralNet::BackProp the output nodes were not allowed to be 
-weighted.
-
-=head2 LEARNING STYLE
+This module is designed to also be a customizable, extensable 
+neural network simulation toolkit. Through a combination of setting
+the $Connection variable and using custom activation functions, as
+well as basic package inheritance, you can simulate many different
+types of neural network structures with very little new code written
+by you.
 
 In this module I have included a more accurate form of "learning" for the
 mesh. This form preforms descent toward a local error minimum (0) on a 
 directional delta, rather than the desired value for that node. This allows
 for better, and more accurate results with larger datasets. This module also
 uses a simpler recursion technique which, suprisingly, is more accurate than
-the original technique that I used in AI::NeuralNet::BackProp.
+the original technique that I've used in other ANNs.
 
-By way of accuracy example, the included example script "examples/ex_dow.pl",
-upon the third learning loop (using AI::NeuralNet::BackProp), would almost
-always report forgetfulness around 25.00000% (rounded to five decimals), 
-whereas when running the same example and the same example code with 
-AI::NeuralNet::Mesh and only B<one> learning loop, it reports forgetfulness 
-of less than I<2.00227>! Over twenty-two percent increase in accuracy on one 
-script alone.
+=head1 EXPORTS
 
-The learning is also speed up immensly. Whereas the above mentioned script 
-often take up to a half hour or more on my systems to learn the example data 
-with the old AI::NeuralNet::BackProp module, it now (with this module) takes 
-less than I<forty seconds> to learn the data set (one loop).
+This module exports three functions by default:
+
+	range
+	intr
+	pdiff
+	
+See range() intr() and pdiff() for description of their respective functions.
+
+Also provided are several export tag sets for usage in the form of:
+
+	use AI::NeuralNet::Mesh ':tag';
+	
+Tag sets are:
+
+	:default 
+	    - These functions are always exported.
+		- Exports:
+		range()
+		intr()
+		pdiff()
+	
+	:all
+		- Exports:
+		p()
+		high()
+		low()
+		range()
+		ramp()
+		and_gate()
+		or_gate()
+	
+	:p
+		- Exports:
+		p()
+		high()
+		low()
+	
+	:acts
+		- Exports:
+		ramp()
+		and_gate()
+		or_gate()
+
+See the respective methods/functions for information about
+each method/functions usage.
+
 
 =head1 METHODS
 
@@ -1368,6 +1397,9 @@ The code ref is expected to return a value to be used as the output of the node.
 The code ref also has access to all the data of that node through the second argument,
 a blessed hash refrence to that node.
 
+See CUSTOM ACTIVATION FUNCTIONS for information on several included activation functions
+other than the ones listed above.
+
 Three of the activation syntaxes are shown in the first constructor above, the "linear",
 "sigmoid" and code ref types.
 
@@ -1379,6 +1411,9 @@ activation() and threshold() methods.
 
 
 =item $net->learn($input_map_ref, $desired_result_ref [, options ]);
+
+NOTE: learn_set() now has increment-degrading turned OFF by default. See note
+on the degrade flag, below.
 
 This will 'teach' a network to associate an new input map with a desired 
 result. It will return a string containg benchmarking information. 
@@ -1396,24 +1431,38 @@ of different lengths.
 
 Options should be written on hash form. There are three options:
 	 
-	 inc	=>	$learning_gradient
-	 max	=>	$maximum_iterations
-	 error	=>	$maximum_allowable_percentage_of_error
+	 inc      =>    $learning_gradient
+	 max      =>    $maximum_iterations
+	 error    =>    $maximum_allowable_percentage_of_error
+	 degrade  =>    $degrade_increment_flag
 	 
 
-C<$learning_gradient> is an optional value used to adjust the weights of the internal
-connections. If $learning_gradient is ommitted, it defaults to 0.10.
+$learning_gradient is an optional value used to adjust the weights of the internal
+connections. If $learning_gradient is ommitted, it defaults to 0.002.
  
-C<$maximum_iterations> is the maximum numbers of iteration the loop should do.
+$maximum_iterations is the maximum numbers of iteration the loop should do.
 It defaults to 1024.  Set it to 0 if you never want the loop to quit before
 the pattern is perfectly learned.
 
-C<$maximum_allowable_percentage_of_error> is the maximum allowable error to have. If 
+$maximum_allowable_percentage_of_error is the maximum allowable error to have. If 
 this is set, then learn() will return when the perecentage difference between the
 actual results and desired results falls below $maximum_allowable_percentage_of_error.
 If you do not include 'error', or $maximum_allowable_percentage_of_error is set to -1,
 then learn() will not return until it gets an exact match for the desired result OR it
 reaches $maximum_iterations.
+
+$degrade_increment_flag is a simple flag used to allow/dissalow increment degrading
+during learning based on a product of the error difference with several other factors.
+$degrade_increment_flag is off by default. Setting $degrade_increment_flag to a true
+value turns increment degrading on. 
+
+In previous module releases $degrade_increment_flag was not used, as increment degrading
+was always on. In this release I have looked at several other network types as well
+as several texts and decided that it would be better to not use increment degrading. The
+option is still there for those that feel the inclination to use it. I have found some areas
+that do need the degrade flag to work at a faster speed. See test.pl for an example. If
+the degrade flag wasn't in test.pl, it would take a very long time to learn.
+
 
 
 =item $net->learn_set(\@set, [ options ]);
@@ -1508,11 +1557,6 @@ Same effect as above, but not the same data (obviously).
 
 =item $net->run($input_map_ref);
 
-NOTE: This is a deviation from the AI::NeuralNet::BackProp API.
-In ::BackProp, run() automatically benchmarked itself. In ::Mesh run() does
-not do this inorder to speed up learn() by as much as 10-20 seconds on small
-data sets. Even larger speed increases are realized on larger data sets.
-
 This method will apply the given array ref at the input layer of the neural network, and
 it will return an array ref to the output of the network. run() will now automatically crunch() 
 a string given as an input (See the crunch() method for info on crunching).
@@ -1523,11 +1567,11 @@ Example Usage:
 	my $outputs = $net->run($inputs);
 
 You can also do this with a string:
-
+                                                                                  
 	my $outputs = $net->run('cloudy - wind is 5 MPH NW');
 	
 
-See also run_uc() below.
+See also run_uc() and run_set() below.
 
 
 =item $net->run_uc($input_map_ref);
@@ -1540,27 +1584,46 @@ All that run_uc() does is that it automatically calls uncrunch() on the output, 
 of whether the input was crunch() -ed or not.
 	
 
+=item $net->run_set($set);
+                                                                                    
+This takes an array ref of the same structure as the learn_set() method, above. It returns
+an array ref. Each element in the returned array ref represents the output for the corresponding
+element in the dataset passed. Uses run() internally.
+
+
+=item $net->get_outs($set);
+
+Simple utility function which takes an array ref of the same structure as the learn_set() method,
+above. It returns an array ref of the same type as run_set() wherein each element contains an
+output value. The output values are the target values specified in the $set passed. Each element
+in the returned array ref represents the output value for the corrseponding row in the dataset
+passed. (A row is two elements of the dataset together, see learn_set() for dataset structure.)
+
+=item $net->load_set($file,$column,$seperator);
+
+Loads a CSV-like dataset from disk
+
+Returns a data set of the same structure as required by the
+learn_set() method. $file is the disk file to load set from.
+$column an optional variable specifying the column in the 
+data set to use as the class attribute. $class defaults to 0.
+$seperator is an optional variable specifying the seperator
+character between values. $seperator defaults to ',' (a single comma). 
+NOTE: This does not handle quoted fields, or any other record
+seperator other than "\n".
+
+The returned array ref is suitable for passing directly to
+learn_set() or get_outs().
+	
 
 =item $net->range();
 
-NOTE: This is a deviation from the AI::NeuralNet::BackProp API.
-::BackProp has range() enabled, ::Mesh does not.
-
-In this module, range() is disabled. It is included as a function stub
-to comply with the API established by AI::NeuralNet::BackProp. I have 
-included the full code to the two essential parts of range() in the module
-file, though. If anyone feels up to it, they can attempt to get range() 
-working on their own. If you do get range working, please send me a copy! :-)
+See CUSTOM ACTIVATION FUNCTIONS for information on several included activation functions.
 
 
 =item $net->benchmark();
 
 =item $net->benchmarked();
-
-NOTE: This is a deviation from the AI::NeuralNet::BackProp API.
-In ::BackProp, benchmarked() returns benchmark info for last run() call.
-In ::Mesh it only will return info for the last learn() call. benchmarked()
-is an alias for benchmark() so we don't break any scripts.. 
 
 This returns a benchmark info string for the last learn() call.
 It is easily printed as a string, as following:
@@ -1569,15 +1632,22 @@ It is easily printed as a string, as following:
 
 
 
+=item $net->verbose($level);
+
+=item $net->verbosity($level);
+
+=item $net->v($level);
 
 =item $net->debug($level)
 
-Toggles debugging off if called with $level = 0 or no arguments. There are four levels
+Note: verbose(), verbosity(), and v() are all functional aliases for debug().
+
+Toggles debugging off if called with $level = 0 or no arguments. There are several levels
 of debugging. 
 
 NOTE: Debugging verbosity has been toned down somewhat from AI::NeuralNet::BackProp,
 but level 4 still prints the same amount of information as you were used to. The other
-levels, however, are mostly for really advanced use. Not much explanation in the other
+levels, however, are mostly for  advanced use. Not much explanation in the other
 levels, but they are included for those of you that feel daring (or just plain bored.)
 
 Level 0 ($level = 0) : Default, no debugging information printed. All printing is 
@@ -1587,7 +1657,8 @@ Level 1 ($level = 1) : Displays the activity between nodes, prints what values w
 received and what they were weighted to.
 
 Level 2 ($level = 2) : Just prints info from the learn() loop, in the form of "got: X, wanted Y"
-type of information.   
+type of information. This is about the third most useful debugging level, after level 12 and
+level 4.
 
 Level 3 ($level = 3) : I don't think I included any level 3 debugs in this version.
 
@@ -1595,6 +1666,11 @@ Level 4 ($level = 4) : This level is the one I use most. It is only used during 
 displays the current error (difference between actual outputs and the target outputs you
 asked for), as well as the current loop number and the benchmark time for the last learn cycle.
 Also printed are the actual outputs and the target outputs below the benchmark times.
+
+Level 12 ($level = 12) : Level 12 prints a dot (period) [.] after each learning loop is
+complete. This is useful for letting the user know that stuff is happening, but without
+having to display any of the internal variables. I use this in the ex_aln.pl demo,
+as well as the ex_agents.pl demo.
 
 Toggles debuging off when called with no arguments. 
 
@@ -1623,10 +1699,14 @@ If there were no errors, it will return a refrence to $net.
 This will load from disk any network saved by save() and completly restore the internal
 state at the point it was save() was called at.
 
-If the file doesn't exist, or if the file is of an invalid file type, then load() will
-return undef. To determine what caused the error, use the error() method, below.
+If the file is of an invalid file type, then load() will
+return undef. Use the error() method, below, to print the error message.
 
 If there were no errors, it will return a refrence to $net.
+
+UPDATE: $filename can now be a newline-seperated set of mesh data. This enables you
+to do $net->load(join("\n",<DATA>)) and other fun things. I added this mainly
+for a demo I'm writing but not qutie done with yet. So, Cheers!
 
 
 
@@ -1651,6 +1731,9 @@ The code ref is called with this syntax:
 The code ref is expected to return a value to be used as the output of the node.
 The code ref also has access to all the data of that node through the second argument,
 a blessed hash refrence to that node.
+
+See CUSTOM ACTIVATION FUNCTIONS for information on several included activation functions
+other than the ones listed above.
 
 The activation type for each layer is preserved across load/save calls. 
 
@@ -1849,7 +1932,7 @@ The column width is preserved across load() and save() calls.
 
 =item $net->random($rand);
 
-This will set the randomness factor from the network. Default is 0.001. When called 
+This will set the randomness factor from the network. Default is 0. When called 
 with no arguments, or an undef value, it will return current randomness value. When
 called with a 0 value, it will disable randomness in the network. The randomness factor
 is preserved across load() and save() calls. 
@@ -1884,67 +1967,271 @@ per pixel, with pure Perl. It returns a blessed refrence to a PCX::Loader object
 supports the following routinges/members. See example files ex_pcx.pl and ex_pcxl.pl in 
 the ./examples/ directory.
 
-The methods below are basically the same as what you would find when you type:
+See C<perldoc PCX::Loader> for information on the methods of the object returned.
 
-	% perldoc PCX::Loader
-
-
-
-=item $pcx->{image}
-
-This is an array refrence to the entire image. The array containes exactly 64000 elements, each
-element contains a number corresponding into an index of the palette array, details below.
+You can download PCX::Loader from 
+	http://www.josiah.countystart.com/modules/get.pl?pcx-loader:mpod
 
 
+=head1 CUSTOM ACTIVATION FUNCTIONS 
 
-=item $pcx->{palette}
+Included in this package are four custom activation functions meant to be used
+as a guide to create your own, as well as to be useful to you in normal use of the
+module. There is only one function exported by default into your namespace, which
+is the range() functions. These are not meant to be used as methods, but as functions.
+These functions return code refs to a Perl closure which does the actual work when
+the time comes.
 
-This is an array ref to an AoH (array of hashes). Each element has the following three keys:
+
+=item range(0..X);
+
+=item range(@range);
+
+=item range(A,B,C);
+
+range() returns a closure limiting the output 
+of that node to a specified set of values.
+Good for use in output layers.
+
+Usage example:
+	$net->activation(4,range(0..5));
+or (in the new() hash constructor form):
+	..
+	{ 
+		nodes		=>	1,
+		activation	=>	range 5..2
+	}
+	..
+You can also pass an array containing the range
+values (not array ref), or you can pass a comma-
+seperated list of values as parameters:
+
+	$net->activation(4,range(@numbers));
+	$net->activation(4,range(6,15,26,106,28,3));
+
+Note: when using a range() activatior, train the
+net TWICE on the data set, because the first time
+the range() function searches for the top value in
+the inputs, and therefore, results could flucuate.
+The second learning cycle guarantees more accuracy.
+
+The actual code that implements the range closure is
+a bit convulted, so I will expand on it here as a simple
+tutorial for custom activation functions.
+
+	= line 1 = 	sub {
+	= line 2 =		my @values = ( 6..10 );
+	= line 3 =		my $sum   = shift;
+	= line 4 =		my $self  = shift;
+	= line 5 =		$self->{top_value}=$sum if($sum>$self->{top_value});
+	= line 6 =		my $index = intr($sum/$self->{top_value}*$#values);
+	= line 7 =		return $values[$index];
+	= line 8 =	}
+
+Now, the actual function fits in one line of code, but I expanded it a bit
+here. Line 1 creates our array of allowed output values. Lines two and
+three grab our parameters off the stack which allow us access to the
+internals of this node. Line 5 checks to see if the sum output of this
+node is higher than any previously encountered, and, if so, it sets
+the marker higher. This also shows that you can use the $self refrence
+to maintain information across activations. This technique is also used
+in the ramp() activator. Line 6 computes the index into the allowed
+values array by first scaling the $sum to be between 0 and 1 and then
+expanding it to fit smoothly inside the number of elements in the array. Then
+we simply round to an integer and pluck that index from the array and
+use it as the output value for that node. 
+
+See? It's not that hard! Using custom activation functions, you could do
+just about anything with the node that you want to, since you have
+access to the node just as if you were a blessed member of that node's object.
+
+
+=item ramp($r);
+
+ramp() preforms smooth ramp activation between 0 and 1 if $r is 1, 
+or between -1 and 1 if $r is 2. $r defaults to 1.	
+
+You can get this into your namespace with the ':acts' export 
+tag as so:
 	
-	$pcx->{palette}->[0]->{red};
-	$pcx->{palette}->[0]->{green};
-	$pcx->{palette}->[0]->{blue};
+	use AI::NeuralNet::Mesh ':acts';
 
-Each is in the range of 0..63, corresponding to their named color component.
+Note: when using a ramp() activatior, train the
+net at least TWICE on the data set, because the first 
+time the ramp() function searches for the top value in
+the inputs, and therefore, results could flucuate.
+The second learning cycle guarantees more accuracy.
+
+No code to show here, as it is almost exactly the same as range().
 
 
+=item and_gate($threshold);
 
-=item $pcx->get_block($array_ref);
+Self explanitory, pretty much. This turns the node into a basic AND gate.
+$threshold is used to decide if an input is true or false (1 or 0). If 
+an input is below $threshold, it is false. $threshold defaults to 0.5.
 
-Returns a rectangular block defined by an array ref in the form of:
+You can get this into your namespace with the ':acts' export 
+tag as so:
 	
-	[$left,$top,$right,$bottom]
+	use AI::NeuralNet::Mesh ':acts';
 
-These must be in the range of 0..319 for $left and $right, and the range of 0..199 for
-$top and $bottom. The block is returned as an array ref with horizontal lines in sequental order.
-I.e. to get a pixel from [2,5] in the block, and $left-$right was 20, then the element in 
-the array ref containing the contents of coordinates [2,5] would be found by [5*20+2] ($y*$width+$x).
+Let's look at the code real quick, as it shows how to get at the indivudal
+input connections:
+
+	= line 1 =	sub {
+	= line 2 =		my $sum  = shift;
+	= line 3 =		my $self = shift;
+	= line 4 =		my $threshold = 0.50;
+	= line 5 =		for my $x (0..$self->{_inputs_size}-1) { 
+	= line 6 =			return 0.000001 if(!$self->{_inputs}->[$x]->{value}<$threshold)
+	= line 7 =		}
+	= line 8 =		return $sum/$self->{_inputs_size};
+	= line 9 =	}
+
+Line 2 and 3 pulls in our sum and self refrence. Line 5 opens a loop to go over
+all the input lines into this node. Line 6 looks at each input line's value 
+and comparse it to the threshold. If the value of that line is below threshold, then
+we return 0.000001 to signify a 0 value. (We don't return a 0 value so that the network
+doen't get hung trying to multiply a 0 by a huge weight during training [it just will
+keep getting a 0 as the product, and it will never learn]). Line 8 returns the mean 
+value of all the inputs if all inputs were above threshold. 
+
+Very simple, eh? :)
+	
+=item or_gate($threshold)
+
+Self explanitory. Turns the node into a basic OR gate, $threshold is used same as above.
+
+You can get this into your namespace with the ':acts' export 
+tag as so:
+	
+	use AI::NeuralNet::Mesh ':acts';
+
+
+=head1 VARIABLES
+
+=item $AI::NeuralNet::Mesh::Connector
+
+This is an option is step up from average use of this module. This variable 
+should hold the fully qualified name of the function used to make the actual connections
+between the nodes in the network. This contains '_c' by default, but if you use
+this variable, be sure to add the fully qualified name of the method. For example,
+in the ALN example, I use a connector in the main package called tree() instead of
+the default connector. Before I call the new() constructor, I use this line of code:
+
+	$AI::NeuralNet::Mesh::Connector = 'main::tree'
+	
+The tree() function is called as a blessed method when it is used internally, providing
+access to the bless refrence in the first argument. See notes on CUSTOM NETWORK CONNECTORS,
+below, for more information on creating your own custom connector.
+
+
+=item $AI::NeuralNet::Mesh::DEBUG
+
+This variable controls the verbosity level. It will not hurt anything to set this 
+directly, yet most people find it easier to set it using the debug() method, or 
+any of its aliases.
+
+
+=head1 CUSTOM NETWORK CONNECTORS
+
+Creating custom network connectors is step up from average use of this module. 
+However, it can be very useful in creating other styles of neural networks, other
+than the default fully-connected feed-foward network. 
+
+You create a custom connector by setting the variable $AI::NeuralNet::Mesh::Connector
+to the fully qualified name of the function used to make the actual connections
+between the nodes in the network. This variable contains '_c' by default, but if you use
+this variable, be sure to add the fully qualified name of the method. For example,
+in the ALN example, I use a connector in the main package called tree() instead of
+the default connector. Before I call the new() constructor, I use this line of code:
+
+	$AI::NeuralNet::Mesh::Connector = 'main::tree'
+	
+The tree() function is called as a blessed method when it is used internally, providing
+access to the bless refrence in the first argument. 
+
+Example connector:
+
+	sub connect_three {
+    	my $self	=	shift;
+    	my $r1a		=	shift;
+    	my $r1b		=	shift;
+    	my $r2a		=	shift;
+    	my $r2b		=	shift;
+    	my $mesh	=	$self->{mesh};
+    	     
+	    for my $y (0..($r1b-$r1a)-1) {
+			$mesh->[$y+$r1a]->add_output_node($mesh->[$y+$r2a-1]) if($y>0);
+			$mesh->[$y+$r1a]->add_output_node($mesh->[$y+$r2a]) if($y<($r2b-$r2a));
+			$mesh->[$y+$r1a]->add_output_node($mesh->[$y+$r2a+1]) if($y<($r2b-$r2a));
+		}
+	}
+	
+This is a very simple example. It feeds the outputs	of every node in the first layer
+to the node directly above it, as well as the nodes on either side of the node directly
+above it, checking for range sides, of course.
+
+The network is stored internally as one long array of node objects. The goal here
+is to connect one range of nodes in that array to another range of nodes. The calling
+function has already calculated the indices into the array, and it passed it to you
+as the four arguments after the $self refrence. The first two arguments we will call
+$r1a and $r1b. These define the start and end indices of the first range, or "layer." Likewise,
+the next two arguemnts, $r2a and $r2b, define the start and end indices of the second
+layer. We also grab a refrence to the mesh array so we dont have to type the $self
+refrence over and over.
+
+The loop that folows the arguments in the above example is very simple. It opens
+a for() loop over the range of numbers, calculating the size instead of just going
+$r1a..$r1b because we use the loop index with the next layer up as well.
+
+$y + $r1a give the index into the mesh array of the current node to connect the output FROM.
+We need to connect this nodes output lines to the next layers input nodes. We do this
+with a simple method of the outputing node (the node at $y+$r1a), called add_output_node().
+
+add_output_node() takes one simple arguemnt: A blessed refrence to a node that it is supposed
+to output its final value TO. We get this blessed refrence with more simple addition.
+
+$y + $r2a gives us the node directly above the first node (supposedly...I'll get to the "supposedly"
+part in a minute.) By adding or subtracting from this number we get the neighbor nodes.
+In the above example you can see we check the $y index to see that we havn't come close to
+any of the edges of the range.
+
+Using $y+$r2a we get the index of the node to pass to add_output_node() on the first node at
+$y+B<$r1a>. 
+
+And that's all there is to it!
+
+For the fun of it, we'll take a quick look at the default connector.
+Below is the actual default connector code, albeit a bit cleaned up, as well as
+line numbers added.
+
+	= line 1  =	sub _c {
+	= line 2  =    	my $self	=	shift;
+	= line 3  =    	my $r1a		=	shift;
+	= line 4  =    	my $r1b		=	shift;
+	= line 5  =    	my $r2a		=	shift;
+	= line 6  =    	my $r2b		=	shift;
+	= line 7  =    	my $mesh	=	$self->{mesh};
+	= line 8  =		for my $y ($r1a..$r1b-1) {
+	= line 9  =			for my $z ($r2a..$r2b-1) {
+	= line 10 =				$mesh->[$y]->add_output_node($mesh->[$z]);
+	= line 11 =			}
+	= line 12 =		}
+	= line 12 =	}
     
-	print $pcx->get_block(0,0,20,50)->[5*20+2];
+Its that easy! The simplest connector (well almost anyways). It just connects each
+node in the first layer defined by ($r1a..$r1b) to every node in the second layer as
+defined by ($r2a..$r2b).
 
-This would print the contents of the element at block coords [2,5].
+Those of you that are still reading, if you do come up with any new connection functions,
+PLEASE SEND THEM TO ME. I would love to see what others are doing, as well as get new
+network ideas. I will probably include any connectors you send over in future releases (with
+propoer credit and permission, of course).
 
+Anyways, happy coding!
 
-
-=item $pcx->get($x,$y);
-
-Returns the value of pixel at image coordinates $x,$y.
-$x must be in the range of 0..319 and $y must be in the range of 0..199.
-
-
-
-=item $pcx->rgb($index);
-
-Returns a 3-element array (not array ref) with each element corresponding to the red, green, or
-blue color components, respecitvely.
-
-
-
-=item $pcx->avg($index);	
-
-Returns the mean value of the red, green, and blue values at the palette index in $index.
-
-	
 
 =head1 WHAT CAN IT DO?
 
@@ -1999,23 +2286,9 @@ association, evaluation, and pattern recognition.
 =head1 EXAMPLES
 
 Included are several example files in the "examples" directory from the
-distribution ZIP file.
-
-	ex_dow.pl
-	ex_add.pl
-	ex_add2.pl
-	ex_pcx.pl
-	ex_pcx2.pl
-	ex_alpha.pl
-	ex_bmp.pl
-	ex_bmp2.pl
-	ex_letters.pl
-	ex_pat.pl
-	ex_crunch.pl
-	ex_synop.pl
-	
-Each of these includes a short explanation at the top of the file. Each of these
-are ment to demonstrate simple, yet practical uses of this module.
+distribution ZIP file. Each of the examples includes a short explanation 
+at the top of the file. Each of these are ment to demonstrate simple, yet 
+practical (for the most part :-) uses of this module.
 	
 
 
@@ -2027,6 +2300,8 @@ listed here simply for your refrence.
 =item AI::NeuralNet::Mesh::node
 
 This is the worker package of the mesh. It implements all the individual nodes of the mesh.
+It might be good to look at the source for this package (in the Mesh.pm file) if you
+plan to do a lot of or extensive custom node activation types.
 
 =item AI::NeuralNet::Mesh::cap
 
@@ -2041,7 +2316,7 @@ as it comes out of the mesh.
 
 =head1 BUGS
 
-This is an alpha release of C<AI::NeuralNet::Mesh>, and that holding true, I am sure 
+This is a beta release of C<AI::NeuralNet::Mesh>, and that holding true, I am sure 
 there are probably bugs in here which I just have not found yet. If you find bugs in this module, I would 
 appreciate it greatly if you could report them to me at F<E<lt>jdb@wcoil.comE<gt>>,
 or, even better, try to patch them yourself and figure out why the bug is being buggy, and
@@ -2058,7 +2333,7 @@ you can redistribute it and/or modify it under the same terms as Perl itself.
 
 The C<AI::NeuralNet::Mesh> and related modules are free software. THEY COME WITHOUT WARRANTY OF ANY KIND.
 
-$Id: AI::NeuralNet::Mesh.pm, v0.31 2000/25/12 05:26:10 josiah Exp $
+$Id: AI::NeuralNet::Mesh.pm, v0.43 2000/15/09 03:29:08 josiah Exp $
 
 
 =head1 THANKS
@@ -2070,8 +2345,7 @@ Below are a list of the people that have contributed in some way to this module 
 	Michiel de Roo, michiel@geo.uu.nl
 	
 Thanks to Randal and Michiel for spoting some documentation and makefile bugs in the last release.
-Thanks to Rodin for the prompting to get the size control for individual layers in the network, as well
-as asking for negative weights.
+Thanks to Rodin for continual suggetions and questions about the module and more.
 
 =head1 DOWNLOAD
 
@@ -2094,3 +2368,16 @@ To subscribe, send a blank email:
 
 
 =cut
+
+
+
+
+
+
+
+
+
+
+
+
+
